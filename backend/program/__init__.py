@@ -1,4 +1,5 @@
 """Program main module"""
+import asyncio
 import os
 import threading
 import time

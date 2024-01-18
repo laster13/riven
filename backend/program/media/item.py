@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 import threading
 from program.media.state import (
@@ -49,6 +50,7 @@ class MediaItem:
 
     def perform_action(self, modules):
         with self._lock:
+            asyncio.set_event_loop(asyncio.new_event_loop())
             self.state.perform_action(modules)
 
     @property

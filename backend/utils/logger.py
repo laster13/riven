@@ -5,6 +5,8 @@ import os
 import re
 import sys
 from .settings import settings_manager as settings
+import websockets
+import asyncio
 
 
 def get_data_path():
@@ -57,6 +59,29 @@ class RedactSensitiveInfo(logging.Filter):
             record.args = self._redact_nested(record.args)
         return True
 
+class WebSocketHandler(logging.Handler):
+    def __init__(self, ):
+        super().__init__()
+        self.url = "ws://localhost:8080/logs"
+        self.websocket = None
+        asyncio.get_event_loop().run_until_complete(self.connect())
+    
+    async def connect(self):
+        try:
+            self.websocket = await websockets.connect(self.url)
+        except Exception:
+            pass
+
+    def emit(self, record):
+        try:
+            if self.websocket:
+                log_message = self.format(record)
+                asyncio.get_event_loop().run_until_complete(self.websocket.send(log_message))
+            else:
+                asyncio.get_event_loop().run_until_complete(self.connect())
+        except Exception as e:
+            print(f"Error sending log message to WebSocket: {e}")
+            asyncio.get_event_loop().run_until_complete(self.connect())
 
 class Logger(logging.Logger):
     """Logging class"""
@@ -65,6 +90,7 @@ class Logger(logging.Logger):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         file_name = f"iceberg-{timestamp}.log"
         data_path = get_data_path()
+        self.connections = set()
 
         super().__init__(file_name)
         formatter = logging.Formatter(
@@ -96,6 +122,11 @@ class Logger(logging.Logger):
         console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)
         self.addHandler(console_handler)
+
+        websocket_handler = WebSocketHandler()
+        websocket_handler.setLevel(log_level)
+        websocket_handler.setFormatter(formatter)
+        self.addHandler(websocket_handler)
 
 
 logger = Logger()

@@ -4,6 +4,7 @@ from program import Program
 from controllers.settings import router as settings_router
 from controllers.items import router as items_router
 from controllers.default import router as default_router
+from controllers.logging import router as logging_router
 import contextlib
 import sys
 import threading
@@ -33,6 +34,7 @@ class Server(uvicorn.Server):
             sys.exit(0)
 
 app = FastAPI()
+app.include_router(logging_router)
 app.program = Program(args)
 
 app.add_middleware(
