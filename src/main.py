@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from controllers.script_router import router as scripts_router
 from controllers.default import router as default_router
 from controllers.items import router as items_router
 from controllers.scrape import router as scrape_router
@@ -79,6 +80,8 @@ app.include_router(scrape_router)
 app.include_router(webhooks_router)
 app.include_router(tmdb_router)
 app.include_router(ws_router)
+app.include_router(scripts_router)
+
 
 
 class Server(uvicorn.Server):

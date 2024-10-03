@@ -354,6 +354,39 @@ class SubliminalConfig(Observable):
 class PostProcessing(Observable):
     subliminal: SubliminalConfig = SubliminalConfig()
 
+# Sous-modèle pour authMethod
+class AuthMethodModel(Observable):
+    authMethod: str = "Basique"
+    oauth_client: str = ""
+    oauth_secret: str = ""
+    oauth_mail: str = ""
+
+# Modèle utilisateur mis à jour
+class UtilisateurModel(Observable):
+    username: str = ""
+    email: str = ""
+    domain: str = ""
+    password: str = ""
+    traefik: AuthMethodModel = AuthMethodModel()
+    domainperso: str = "traefik"
+
+class CloudflareModel(Observable):
+    cloudflare_login: str = ""
+    cloudflare_api_key: str = ""
+
+class ApplicationModel(Observable):
+    id: int = 1
+    label: str = ""
+
+class DossierModel(BaseModel):
+    on_item_type: List[str] = []
+    authentification: dict[str, str] = {"authappli": "basique"}
+    domaine: dict = {}
+
+class MediaModel(Observable):
+    on_item_type: List[str] = []
+
+
 class AppModel(Observable):
     version: str = get_version()
     debug: bool = True
@@ -371,6 +404,12 @@ class AppModel(Observable):
     database: DatabaseModel = DatabaseModel()
     notifications: NotificationsModel = NotificationsModel()
     post_processing: PostProcessing = PostProcessing()
+    cloudflare: CloudflareModel = CloudflareModel()
+    utilisateur: UtilisateurModel = UtilisateurModel()
+    dossiers: DossierModel = DossierModel()
+    media: MediaModel = MediaModel()
+    applications: List[ApplicationModel] = []
+
 
     def __init__(self, **data: Any):
         current_version = get_version()
