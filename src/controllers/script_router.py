@@ -5,8 +5,8 @@ from fastapi.responses import StreamingResponse
 import os
 from typing import List
 
-# Dossier où sont situés les scripts bash
-SCRIPTS_DIR = "/home/laster13/seedbox-compose"
+USER = os.getenv("USER") or os.getlogin()
+SCRIPTS_DIR = f"/home/{USER}/seedbox-compose"
 
 # Création du router pour les scripts Bash
 router = APIRouter(
