@@ -6,11 +6,11 @@ import os
 from typing import List
 
 USER = os.getenv("USER") or os.getlogin()
-SCRIPTS_DIR = f"/home/{USER}/seedbox-compose"
+SCRIPTS_DIR = f"/home/{USER}/projet-riven/riven-frontend/scripts"
 
-# Création du router pour les scripts Bash
+# Création du router pour les scripts Bash avec le préfixe `/scripts`
 router = APIRouter(
-    prefix="/scripts",
+    prefix="/scripts",  # Toutes les routes seront préfixées par `/scripts`
     tags=["scripts"],
     responses={404: {"description": "Not found"}},
 )
@@ -18,6 +18,21 @@ router = APIRouter(
 class ScriptModel(BaseModel):
     name: str
     params: List[str] = []
+
+
+@router.get("/check-file")
+async def check_file():
+    file_path = '/home/laster13/seedbox-compose/ssddb'  # Chemin du fichier à vérifier
+    
+    try:
+        # Vérification de l'existence du fichier
+        if os.path.exists(file_path):
+            return {"exists": True}  # Le fichier existe
+        else:
+            return {"exists": False}  # Le fichier n'existe pas
+    except Exception as e:
+        # Gestion des erreurs (par exemple, problème de permissions)
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
 
 @router.get("/run/{script_name}")
@@ -56,6 +71,7 @@ async def run_script(script_name: str, label: str = Query(None, description="Lab
 
     # Retourne les logs en streaming
     return StreamingResponse(stream_logs(), media_type="text/event-stream")
+
 
 @router.post("/run")
 async def run_script_with_params(script: ScriptModel):
