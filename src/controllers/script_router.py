@@ -3,62 +3,62 @@ from pydantic import BaseModel
 from subprocess import Popen, PIPE
 from fastapi.responses import StreamingResponse
 import os
-from typing import List
+import subprocess
+import yaml
+import json
+from program.json_manager import update_json_files, save_json_to_file, load_json_from_file
 
 USER = os.getenv("USER") or os.getlogin()
-SCRIPTS_DIR = f"/home/{USER}/projet-riven/riven-frontend/scripts"
 
-# Création du router pour les scripts Bash avec le préfixe `/scripts`
+SCRIPTS_DIR = f"/home/{USER}/projet-riven/riven-frontend/scripts"
+YAML_PATH = f"/home/{USER}/.ansible/inventories/group_vars/all.yml"
+VAULT_PASSWORD_FILE = f"/home/{USER}/.vault_pass"
+BACKEND_JSON_PATH = f"/home/{USER}/projet-riven/riven/data/settings.json"
+FRONTEND_JSON_PATH = f"/home/{USER}/projet-riven/riven-frontend/static/settings.json"
+
+
+# Création du router pour les scripts et les configurations YAML
 router = APIRouter(
-    prefix="/scripts",  # Toutes les routes seront préfixées par `/scripts`
+    prefix="/scripts",
     tags=["scripts"],
     responses={404: {"description": "Not found"}},
 )
 
 class ScriptModel(BaseModel):
     name: str
-    params: List[str] = []
+    params: list[str] = []
 
-
+# Route pour vérifier l'existence d'un fichier
 @router.get("/check-file")
 async def check_file():
-    file_path = '/home/laster13/seedbox-compose/ssddb'  # Chemin du fichier à vérifier
+    file_path = f'/home/{USER}/seedbox-compose/ssddb'
     
     try:
-        # Vérification de l'existence du fichier
         if os.path.exists(file_path):
-            return {"exists": True}  # Le fichier existe
+            return {"exists": True}
         else:
-            return {"exists": False}  # Le fichier n'existe pas
+            return {"exists": False}
     except Exception as e:
-        # Gestion des erreurs (par exemple, problème de permissions)
         raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
-
+# Route pour exécuter un script Bash
 @router.get("/run/{script_name}")
 async def run_script(script_name: str, label: str = Query(None, description="Label du conteneur")):
-    # Validation du nom du script
     if not script_name.isalnum():
         raise HTTPException(status_code=400, detail="Nom de script invalide.")
 
-    # Chemin vers le script bash
     script_path = os.path.join(SCRIPTS_DIR, f"{script_name}.sh")
     
-    # Vérification de l'existence du script
     if not os.path.isfile(script_path):
         raise HTTPException(status_code=404, detail=f"Script non trouvé: {script_name}.sh")
 
-    # Fonction pour streamer les logs
     def stream_logs():
         try:
-            # Si un label est fourni, on l'utilise comme argument du script
             if label:
                 process = Popen(['bash', script_path, label], stdout=PIPE, stderr=PIPE, text=True)
             else:
-                # Si pas de label, on exécute le script sans paramètres
                 process = Popen(['bash', script_path], stdout=PIPE, stderr=PIPE, text=True)
 
-            # Stream des logs du script
             for line in process.stdout:
                 yield f"data: {line}\n\n"
             for err in process.stderr:
@@ -69,26 +69,53 @@ async def run_script(script_name: str, label: str = Query(None, description="Lab
         except Exception as e:
             yield f"data: Erreur lors de l'exécution: {str(e)}\n\n"
 
-    # Retourne les logs en streaming
     return StreamingResponse(stream_logs(), media_type="text/event-stream")
 
+@router.post("/update-config")
+async def update_config():
+    try:
+        # Tenter de déchiffrer le fichier YAML avec Ansible Vault
+        command = f"ansible-vault view {YAML_PATH} --vault-password-file {VAULT_PASSWORD_FILE}"
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
 
-@router.post("/run")
-async def run_script_with_params(script: ScriptModel):
-    if not script.name.isalnum():
-        raise HTTPException(status_code=400, detail="Nom de script invalide.")
-    script_path = os.path.join(SCRIPTS_DIR, f"{script.name}.sh")
-    if not os.path.isfile(script_path):
-        raise HTTPException(status_code=404, detail="Script non trouvé.")
+        # Log du résultat pour analyse
+        print(f"Résultat de la commande ansible-vault: {result.stdout}, Erreurs: {result.stderr}")
 
-    def stream_logs():
-        process = Popen(['bash', script_path] + script.params, stdout=PIPE, stderr=PIPE, text=True)
-        for line in process.stdout:
-            yield f"data: {line}\n\n"
-        for err in process.stderr:
-            yield f"data: Erreur: {err}\n\n"
-        process.wait()
-        print("Script terminé, envoi de l'événement 'end'")
-        yield "event: end\ndata: Fin du script\n\n"
+        if result.returncode != 0:
+            raise Exception(f"Erreur lors du déchiffrement : {result.stderr}")
 
-    return StreamingResponse(stream_logs(), media_type="text/event-stream")
+        decrypted_yaml_content = result.stdout
+
+        # Charger les données YAML dans un dictionnaire
+        yaml_data = yaml.safe_load(decrypted_yaml_content)
+
+        # Vérifie si yaml_data est vide ou incorrect
+        if not yaml_data:
+            raise Exception("Le fichier YAML déchiffré est vide ou mal formaté.")
+
+        # Mettre à jour les fichiers JSON avec les données 'sub' déchiffrées du YAML
+        update_json_files(decrypted_yaml_content)
+
+        # Charger les fichiers JSON backend (pour user et cloudflare)
+        backend_json_data = load_json_from_file(BACKEND_JSON_PATH)
+
+        # Mise à jour des clés cloudflare et utilisateur uniquement dans le backend
+        if 'cloudflare' in yaml_data:
+            backend_json_data['cloudflare']['cloudflare_login'] = yaml_data['cloudflare']['login']
+            backend_json_data['cloudflare']['cloudflare_api_key'] = yaml_data['cloudflare']['api']
+
+        if 'user' in yaml_data:
+            backend_json_data['utilisateur']['username'] = yaml_data['user']['name']
+            backend_json_data['utilisateur']['email'] = yaml_data['user']['mail']
+            backend_json_data['utilisateur']['domain'] = yaml_data['user']['domain']
+            backend_json_data['utilisateur']['password'] = yaml_data['user']['pass']
+
+        # Sauvegarder les fichiers JSON mis à jour
+        save_json_to_file(backend_json_data, BACKEND_JSON_PATH)
+
+        return {"message": "Configuration mise à jour avec succès."}
+
+    except Exception as e:
+        # Log de l'erreur pour analyse
+        print(f"Erreur lors de la mise à jour : {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la mise à jour : {str(e)}")
