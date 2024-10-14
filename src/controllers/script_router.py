@@ -1,12 +1,15 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
-from subprocess import Popen, PIPE
 from fastapi.responses import StreamingResponse
 import os
 import subprocess
 import yaml
 import json
 from program.json_manager import update_json_files, save_json_to_file, load_json_from_file
+from program.settings.manager import settings_manager
+from sse_starlette.sse import EventSourceResponse
+import time
+import asyncio
 
 USER = os.getenv("USER") or os.getlogin()
 
@@ -16,6 +19,8 @@ VAULT_PASSWORD_FILE = f"/home/{USER}/.vault_pass"
 BACKEND_JSON_PATH = f"/home/{USER}/projet-riven/riven/data/settings.json"
 FRONTEND_JSON_PATH = f"/home/{USER}/projet-riven/riven-frontend/static/settings.json"
 
+# Chargement initial des données JSON
+json_data = load_json_from_file(BACKEND_JSON_PATH)
 
 # Création du router pour les scripts et les configurations YAML
 router = APIRouter(
@@ -55,9 +60,9 @@ async def run_script(script_name: str, label: str = Query(None, description="Lab
     def stream_logs():
         try:
             if label:
-                process = Popen(['bash', script_path, label], stdout=PIPE, stderr=PIPE, text=True)
+                process = subprocess.Popen(['bash', script_path, label], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             else:
-                process = Popen(['bash', script_path], stdout=PIPE, stderr=PIPE, text=True)
+                process = subprocess.Popen(['bash', script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
             for line in process.stdout:
                 yield f"data: {line}\n\n"
@@ -96,22 +101,20 @@ async def update_config():
         # Mettre à jour les fichiers JSON avec les données 'sub' déchiffrées du YAML
         update_json_files(decrypted_yaml_content)
 
-        # Charger les fichiers JSON backend (pour user et cloudflare)
-        backend_json_data = load_json_from_file(BACKEND_JSON_PATH)
-
-        # Mise à jour des clés cloudflare et utilisateur uniquement dans le backend
+        # Mettre à jour les informations Cloudflare
         if 'cloudflare' in yaml_data:
-            backend_json_data['cloudflare']['cloudflare_login'] = yaml_data['cloudflare']['login']
-            backend_json_data['cloudflare']['cloudflare_api_key'] = yaml_data['cloudflare']['api']
+            settings_manager.settings.cloudflare.cloudflare_login = yaml_data['cloudflare']['login']
+            settings_manager.settings.cloudflare.cloudflare_api_key = yaml_data['cloudflare']['api']
 
+        # Mettre à jour les informations utilisateur
         if 'user' in yaml_data:
-            backend_json_data['utilisateur']['username'] = yaml_data['user']['name']
-            backend_json_data['utilisateur']['email'] = yaml_data['user']['mail']
-            backend_json_data['utilisateur']['domain'] = yaml_data['user']['domain']
-            backend_json_data['utilisateur']['password'] = yaml_data['user']['pass']
+            settings_manager.settings.utilisateur.username = yaml_data['user']['name']
+            settings_manager.settings.utilisateur.email = yaml_data['user']['mail']
+            settings_manager.settings.utilisateur.domain = yaml_data['user']['domain']
+            settings_manager.settings.utilisateur.password = yaml_data['user']['pass']
 
-        # Sauvegarder les fichiers JSON mis à jour
-        save_json_to_file(backend_json_data, BACKEND_JSON_PATH)
+        # Sauvegarder les paramètres mis à jour
+        settings_manager.save()
 
         return {"message": "Configuration mise à jour avec succès."}
 
@@ -119,3 +122,4 @@ async def update_config():
         # Log de l'erreur pour analyse
         print(f"Erreur lors de la mise à jour : {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de la mise à jour : {str(e)}")
+
