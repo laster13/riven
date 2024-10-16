@@ -22,13 +22,6 @@ def update_json_files(decrypted_yaml_content):
                 "authappli": "basique"  # Garder "basique" comme valeur par défaut
             },
             "domaine": {}
-        },
-        "updaters": {
-            "plex": {
-                "token": "",
-                "login": "",
-                "password": ""
-            }
         }
     }
 
