@@ -9,6 +9,8 @@ from routers.secure.scrape import router as scrape_router
 from routers.secure.settings import router as settings_router
 from routers.secure.webhooks import router as webhooks_router
 from routers.secure.stream import router as stream_router
+from routers.secure.script_router import router as script_router_router
+
 
 API_VERSION = "v1"
 
@@ -26,3 +28,4 @@ app_router.include_router(scrape_router, dependencies=[Depends(resolve_api_key)]
 app_router.include_router(settings_router, dependencies=[Depends(resolve_api_key)])
 app_router.include_router(webhooks_router, dependencies=[Depends(resolve_api_key)])
 app_router.include_router(stream_router, dependencies=[Depends(resolve_api_key)])
+app_router.include_router(script_router_router, dependencies=[Depends(resolve_api_key)])
