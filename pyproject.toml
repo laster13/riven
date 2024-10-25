@@ -1,0 +1,115 @@
+[tool.poetry]
+name = "riven"
+version = "0.16.2"
+description = "Plex torrent streaming through Real Debrid and 3rd party services like Overseerr, Mdblist, etc."
+authors = ["Riven Developers"]
+license = "GPL-3.0"
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+dill = "^0.3.8"
+plexapi = "^4.15.10"
+requests = "^2.31.0"
+xmltodict = "^0.13.0"
+lxml = "^5.1.0"
+pydantic = "^2.6.3"
+fastapi = "^0.110.0"
+uvicorn = {extras = ["standard"], version = "^0.30.6"}
+apscheduler = "^3.10.4"
+regex = "^2023.12.25"
+coverage = "^7.5.4"
+cachetools = "^5.3.3"
+loguru = "^0.7.2"
+rich = "^13.7.1"
+opentelemetry-api = "^1.25.0"
+opentelemetry-sdk = "^1.25.0"
+opentelemetry-exporter-prometheus = "^0.46b0"
+prometheus-client = "^0.20.0"
+sqlalchemy = "^2.0.31"
+sqla-wrapper = "^6.0.0"
+alembic = "^1.13.2"
+psycopg2-binary = "^2.9.9"
+apprise = "^1.8.1"
+subliminal = "^2.2.1"
+rank-torrent-name = "^1.0.2"
+jsonschema = "^4.23.0"
+scalar-fastapi = "^1.0.3"
+psutil = "^6.0.0"
+python-dotenv = "^1.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pyright = "^1.1.352"
+pyperf = "^2.2.0"
+pytest = "^8.3.2"
+pyfakefs = "^5.4.1"
+ruff = "^0.3.0"
+isort = "^5.10.1"
+codecov = "^2.1.13"
+httpx = "^0.27.0"
+memray = "^1.13.4"
+testcontainers = "^4.8.0"
+mypy = "^1.11.2"
+
+[tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 88
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff.lint]
+# https://docs.astral.sh/ruff/rules/
+ignore = [
+  "PLR0913", # flask8-bugbear: Too many arguments for a method or function
+  "PLR0911", # flask8-bugbear: Too many return statements
+  "PLR2004", # flake8-bugbear: Magic value used in comparison
+  "S104", # flake8-bandit: Possible binding to all interfaces
+  "S108", # flake8-bandit: Probable insecure usage of temp file/directory
+  "S311", # flake8-bandit: Standard pseudo-random generators are not suitable for security/cryptographic purposes
+  "S101", # ruff: Ignore assert warnings on tests
+  "RET505", #
+  "RET503",  # ruff: Ignore required explicit returns (is this desired?)
+  "SLF001", # private member accessing from pickle
+  "B904" # ruff: ignore raising exceptions from except for the API
+]
+extend-select = [
+  "I",   # isort
+  "C90", # mccabe complexity
+  "B",   # flake8-bugbear
+  "PL",  # pycodestyle
+  "S",   # flake8-bandit
+  "T10", # flake8-debugger
+  "PIE", # flake8-pie
+  "T20", # flake8-print
+  "Q",   # flake8-quotes
+  "RSE", # flake8-raise
+  "RET", # flake8-return
+  "SLF", # flake8-self
+  "SIM", # flake8-simplify
+  "ARG", # flake8-unused-arguments
+]
