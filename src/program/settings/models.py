@@ -218,6 +218,16 @@ class CometConfig(Observable):
     timeout: int = 30
     ratelimit: bool = True
 
+class YggConfig(BaseModel):
+    """
+    Classe pour gérer la configuration de Yggflix.
+    """
+    enabled: bool = True
+    api_url: str = "http://localhost:8081"
+    timeout: int = 30                   
+    ratelimit: bool = True              
+    ygg_passkey: str = ""  
+
 
 class ZileanConfig(Observable):
     enabled: bool = False
@@ -296,6 +306,7 @@ class ScraperModel(Observable):
     mediafusion: MediafusionConfig = MediafusionConfig()
     zilean: ZileanConfig = ZileanConfig()
     comet: CometConfig = CometConfig()
+    yggflix: YggConfig = YggConfig()
 
 
 # Version Ranking Model (set application defaults here!)

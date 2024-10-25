@@ -1,7 +1,7 @@
 import threading
 from datetime import datetime
 from typing import Dict, Generator, List, Union
-
+from program.settings.models import YggConfig
 from program.media.item import Episode, MediaItem, Movie, Season, Show
 from program.media.state import States
 from program.media.stream import Stream
@@ -16,6 +16,7 @@ from program.scrapers.shared import _parse_results
 from program.scrapers.torbox import TorBoxScraper
 from program.scrapers.torrentio import Torrentio
 from program.scrapers.zilean import Zilean
+from program.scrapers.yggflix import Yggflix
 from program.settings.manager import settings_manager
 from utils.logger import logger
 
@@ -25,6 +26,8 @@ class Scraping:
         self.key = "scraping"
         self.initialized = False
         self.settings = settings_manager.settings.scraping
+        
+        # Instanciation de YggConfig
         self.services = {
             Annatar: Annatar(),
             Torrentio: Torrentio(),
@@ -35,7 +38,8 @@ class Scraping:
             Mediafusion: Mediafusion(),
             Prowlarr: Prowlarr(),
             Zilean: Zilean(),
-            Comet: Comet()
+            Comet: Comet(),
+            Yggflix: Yggflix()  # Passez la bonne instance ici
         }
         self.initialized = self.validate()
         if not self.initialized:
