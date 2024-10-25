@@ -6,7 +6,7 @@ from sqlalchemy import Index, and_
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from program.db.db import db
-from utils.logger import logger
+from loguru import logger
 
 if TYPE_CHECKING:
     from program.media.item import MediaItem
@@ -24,7 +24,7 @@ class StreamRelation(db.Model):
         Index('ix_streamrelation_parent_id', 'parent_id'),
         Index('ix_streamrelation_child_id', 'child_id'),
     )
-    
+
 class StreamBlacklistRelation(db.Model):
     __tablename__ = "StreamBlacklistRelation"
 
@@ -47,8 +47,8 @@ class Stream(db.Model):
     rank: Mapped[int] = mapped_column(sqlalchemy.Integer, nullable=False)
     lev_ratio: Mapped[float] = mapped_column(sqlalchemy.Float, nullable=False)
 
-    parents: Mapped[list["MediaItem"]] = relationship(secondary="StreamRelation", back_populates="streams")
-    blacklisted_parents: Mapped[list["MediaItem"]] = relationship(secondary="StreamBlacklistRelation", back_populates="blacklisted_streams")
+    parents: Mapped[list["MediaItem"]] = relationship(secondary="StreamRelation", back_populates="streams", lazy="selectin")
+    blacklisted_parents: Mapped[list["MediaItem"]] = relationship(secondary="StreamBlacklistRelation", back_populates="blacklisted_streams", lazy="selectin")
 
     __table_args__ = (
         Index('ix_stream_infohash', 'infohash'),
@@ -66,6 +66,6 @@ class Stream(db.Model):
 
     def __hash__(self):
         return self.infohash
-    
+
     def __eq__(self, other):
         return isinstance(other, Stream) and self.infohash == other.infohash

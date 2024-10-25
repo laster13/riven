@@ -15,7 +15,7 @@ from program.media.item import Episode, MediaItem, Movie, Season, Show
 from program.media.state import States
 from program.media.stream import Stream
 from program.settings.manager import settings_manager
-from utils.logger import logger
+from loguru import logger
 
 
 class Symlinker:
@@ -270,6 +270,15 @@ class Symlinker:
             item_path = base_path / f"{item.title.replace('/', '-')} ({item.aired_at.year}) {{imdb-{item.imdb_id}}}"
         return _delete_symlink(item, item_path)
 
+    def delete_item_symlinks_by_id(self, item_id: int) -> bool:
+        """Delete symlinks and directories based on the item ID."""
+        with db.Session() as session:
+            item = session.execute(select(MediaItem).where(MediaItem._id == item_id)).unique().scalar_one()
+            if not item:
+                logger.error(f"No item found with ID {item_id}")
+                return False
+            return self.delete_item_symlinks(item)
+
 def _delete_symlink(item: Union[Movie, Show], item_path: Path) -> bool:
     try:
         if item_path.exists():
@@ -294,8 +303,12 @@ def _get_item_path(item: Union[Movie, Episode]) -> Optional[Path]:
 
     rclone_path = Path(settings_manager.settings.symlink.rclone_path)
     possible_folders = [item.folder, item.file, item.alternative_folder]
+    possible_folders_without_duplicates = list(set(possible_folders))
+    if len(possible_folders_without_duplicates) == 1:
+        new_possible_folder = Path(possible_folders_without_duplicates[0]).with_suffix("")
+        possible_folders_without_duplicates.append(new_possible_folder)
 
-    for folder in possible_folders:
+    for folder in possible_folders_without_duplicates:
         if folder:
             file_path = rclone_path / folder / item.file
             if file_path.exists():

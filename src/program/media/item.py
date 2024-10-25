@@ -9,11 +9,11 @@ from RTN import parse
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped, mapped_column, object_session, relationship
 
-import utils.websockets.manager as ws_manager
+from utils.sse_manager import sse_manager
 from program.db.db import db
 from program.media.state import States
 from program.media.subtitle import Subtitle
-from utils.logger import logger
+from loguru import logger
 
 from ..db.db_functions import blacklist_stream, reset_streams
 from .stream import Stream
@@ -23,7 +23,6 @@ class MediaItem(db.Model):
     """MediaItem class"""
     __tablename__ = "MediaItem"
     _id: Mapped[int] = mapped_column(primary_key=True)
-    item_id: Mapped[str] = mapped_column(sqlalchemy.String, nullable=False)
     number: Mapped[Optional[int]] = mapped_column(sqlalchemy.Integer, nullable=True)
     type: Mapped[str] = mapped_column(sqlalchemy.String, nullable=False)
     requested_at: Mapped[Optional[datetime]] = mapped_column(sqlalchemy.DateTime, default=datetime.now())
@@ -33,8 +32,8 @@ class MediaItem(db.Model):
     scraped_at: Mapped[Optional[datetime]] = mapped_column(sqlalchemy.DateTime, nullable=True)
     scraped_times: Mapped[Optional[int]] = mapped_column(sqlalchemy.Integer, default=0)
     active_stream: Mapped[Optional[dict]] = mapped_column(sqlalchemy.JSON, nullable=True)
-    streams: Mapped[list[Stream]] = relationship(secondary="StreamRelation", back_populates="parents", lazy="select", cascade="all")
-    blacklisted_streams: Mapped[list[Stream]] = relationship(secondary="StreamBlacklistRelation", back_populates="blacklisted_parents", lazy="select", cascade="all")
+    streams: Mapped[list[Stream]] = relationship(secondary="StreamRelation", back_populates="parents", lazy="selectin", cascade="all")
+    blacklisted_streams: Mapped[list[Stream]] = relationship(secondary="StreamBlacklistRelation", back_populates="blacklisted_parents", lazy="selectin", cascade="all")
     symlinked: Mapped[Optional[bool]] = mapped_column(sqlalchemy.Boolean, default=False)
     symlinked_at: Mapped[Optional[datetime]] = mapped_column(sqlalchemy.DateTime, nullable=True)
     symlinked_times: Mapped[Optional[int]] = mapped_column(sqlalchemy.Integer, default=0)
@@ -59,7 +58,7 @@ class MediaItem(db.Model):
     update_folder: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
     overseerr_id: Mapped[Optional[int]] = mapped_column(sqlalchemy.Integer, nullable=True)
     last_state: Mapped[Optional[States]] = mapped_column(sqlalchemy.Enum(States), default=States.Unknown)
-    subtitles: Mapped[list[Subtitle]] = relationship(Subtitle, back_populates="parent", lazy="joined", cascade="all, delete-orphan")
+    subtitles: Mapped[list[Subtitle]] = relationship(Subtitle, back_populates="parent", lazy="selectin", cascade="all, delete-orphan")
 
     __mapper_args__ = {
         "polymorphic_identity": "mediaitem",
@@ -68,7 +67,7 @@ class MediaItem(db.Model):
     }
 
     __table_args__ = (
-        Index('ix_mediaitem_item_id', 'item_id'),
+        # UniqueConstraint('imdb_id', name='uix_imdb_id'),
         Index('ix_mediaitem_type', 'type'),
         Index('ix_mediaitem_requested_by', 'requested_by'),
         Index('ix_mediaitem_title', 'title'),
@@ -112,8 +111,6 @@ class MediaItem(db.Model):
         self.imdb_id =  item.get("imdb_id")
         if self.imdb_id:
             self.imdb_link = f"https://www.imdb.com/title/{self.imdb_id}/"
-            if not hasattr(self, "item_id"):
-                self.item_id = self.imdb_id
         self.tvdb_id = item.get("tvdb_id")
         self.tmdb_id = item.get("tmdb_id")
         self.network = item.get("network")
@@ -136,9 +133,10 @@ class MediaItem(db.Model):
         self.subtitles = item.get("subtitles", [])
 
     def store_state(self) -> None:
-        if self.last_state and self.last_state != self._determine_state():
-            ws_manager.send_item_update(json.dumps(self.to_dict()))
-        self.last_state = self._determine_state()
+        new_state = self._determine_state()
+        if self.last_state and self.last_state != new_state:
+            sse_manager.publish_event("item_update", {"last_state": self.last_state, "new_state": new_state, "item_id": self._id})
+        self.last_state = new_state
 
     def is_stream_blacklisted(self, stream: Stream):
         """Check if a stream is blacklisted for this item."""
@@ -196,10 +194,13 @@ class MediaItem(db.Model):
 
     def is_scraped(self):
         session = object_session(self)
-        if session:
-            session.refresh(self, attribute_names=['blacklisted_streams']) # Prom: Ensure these reflect the state of whats in the db.
-        return (len(self.streams) > 0
-            and any(not stream in self.blacklisted_streams for stream in self.streams))
+        if session and session.is_active:
+            try:
+                session.refresh(self, attribute_names=['blacklisted_streams'])
+                return (len(self.streams) > 0 and any(not stream in self.blacklisted_streams for stream in self.streams))
+            except (sqlalchemy.exc.InvalidRequestError, sqlalchemy.orm.exc.DetachedInstanceError):
+                return False
+        return False
 
     def to_dict(self):
         """Convert item to dictionary (API response)"""
@@ -222,30 +223,31 @@ class MediaItem(db.Model):
             "scraped_times": self.scraped_times,
         }
 
-    def to_extended_dict(self, abbreviated_children=False):
+    def to_extended_dict(self, abbreviated_children=False, with_streams=True):
         """Convert item to extended dictionary (API response)"""
         dict = self.to_dict()
         match self:
             case Show():
                 dict["seasons"] = (
-                    [season.to_extended_dict() for season in self.seasons]
+                    [season.to_extended_dict(with_streams=with_streams) for season in self.seasons]
                     if not abbreviated_children
                     else self.represent_children
                 )
             case Season():
                 dict["episodes"] = (
-                    [episode.to_extended_dict() for episode in self.episodes]
+                    [episode.to_extended_dict(with_streams=with_streams) for episode in self.episodes]
                     if not abbreviated_children
                     else self.represent_children
                 )
         dict["language"] = self.language if hasattr(self, "language") else None
         dict["country"] = self.country if hasattr(self, "country") else None
         dict["network"] = self.network if hasattr(self, "network") else None
-        dict["active_stream"] = (
-            self.active_stream if hasattr(self, "active_stream") else None
-        )
-        dict["streams"] = getattr(self, "streams", [])
-        dict["blacklisted_streams"] = getattr(self, "blacklisted_streams", [])
+        if with_streams:
+            dict["streams"] = getattr(self, "streams", [])
+            dict["blacklisted_streams"] = getattr(self, "blacklisted_streams", [])
+            dict["active_stream"] = (
+                self.active_stream if hasattr(self, "active_stream") else None
+            )
         dict["number"] = self.number if hasattr(self, "number") else None
         dict["symlinked"] = self.symlinked if hasattr(self, "symlinked") else None
         dict["symlinked_at"] = (
@@ -261,7 +263,7 @@ class MediaItem(db.Model):
         dict["file"] = self.file if hasattr(self, "file") else None
         dict["folder"] = self.folder if hasattr(self, "folder") else None
         dict["symlink_path"] = self.symlink_path if hasattr(self, "symlink_path") else None
-        dict["subtitles"] = getattr(self, "subtitles", [])
+        dict["subtitles"] = [subtitle.to_dict() for subtitle in self.subtitles] if hasattr(self, "subtitles") else []
         return dict
 
     def __iter__(self):
@@ -317,7 +319,7 @@ class MediaItem(db.Model):
             return self.aliases
 
     def __hash__(self):
-        return hash(self.item_id)
+        return hash(self._id)
 
     def reset(self, soft_reset: bool = False):
         """Reset item attributes."""
@@ -377,7 +379,7 @@ class MediaItem(db.Model):
 
     @property
     def collection(self):
-        return self.parent.collection if self.parent else self.item_id
+        return self.parent.collection if self.parent else self._id
 
 
 class Movie(MediaItem):
@@ -397,7 +399,6 @@ class Movie(MediaItem):
         self.type = "movie"
         self.file = item.get("file", None)
         super().__init__(item)
-        self.item_id = self.imdb_id
 
     def __repr__(self):
         return f"Movie:{self.log_string}:{self.state.name}"
@@ -421,13 +422,12 @@ class Show(MediaItem):
         self.type = "show"
         self.locations = item.get("locations", [])
         self.seasons: list[Season] = item.get("seasons", [])
-        self.item_id = item.get("imdb_id")
         self.propagate_attributes_to_childs()
 
     def get_season_index_by_id(self, item_id):
-        """Find the index of an season by its item_id."""
+        """Find the index of an season by its _id."""
         for i, season in enumerate(self.seasons):
-            if season.item_id == item_id:
+            if season._id == item_id:
                 return i
         return None
 
@@ -459,9 +459,7 @@ class Show(MediaItem):
     def store_state(self) -> None:
         for season in self.seasons:
             season.store_state()
-        if self.last_state and self.last_state != self._determine_state():
-            ws_manager.send_item_update(json.dumps(self.to_dict()))
-        self.last_state = self._determine_state()
+        super().store_state()
 
     def __repr__(self):
         return f"Show:{self.log_string}:{self.state.name}"
@@ -495,7 +493,6 @@ class Show(MediaItem):
             season.is_anime = self.is_anime
             self.seasons.append(season)
             season.parent = self
-            #season.item_id.parent_id = self.item_id
             self.seasons = sorted(self.seasons, key=lambda s: s.number)
 
     def propagate_attributes_to_childs(self):
@@ -533,15 +530,12 @@ class Season(MediaItem):
     def store_state(self) -> None:
         for episode in self.episodes:
             episode.store_state()
-        if self.last_state and self.last_state != self._determine_state():
-            ws_manager.send_item_update(json.dumps(self.to_dict()))
-        self.last_state = self._determine_state()
+        super().store_state()
 
     def __init__(self, item):
         self.type = "season"
         self.number = item.get("number", None)
         self.episodes: list[Episode] = item.get("episodes", [])
-        self.item_id = self.number
         self.parent = item.get("parent", None)
         super().__init__(item)
         if self.parent and isinstance(self.parent, Show):
@@ -598,10 +592,10 @@ class Season(MediaItem):
             if e.number not in existing_episodes:
                 self.add_episode(e)
 
-    def get_episode_index_by_id(self, item_id):
-        """Find the index of an episode by its item_id."""
+    def get_episode_index_by_id(self, item_id: int):
+        """Find the index of an episode by its _id."""
         for i, episode in enumerate(self.episodes):
-            if episode.item_id == item_id:
+            if episode._id == item_id:
                 return i
         return None
 
@@ -642,7 +636,6 @@ class Episode(MediaItem):
         self.type = "episode"
         self.number = item.get("number", None)
         self.file = item.get("file", None)
-        self.item_id = self.number# , parent_id=item.get("parent_id"))
         super().__init__(item)
         if self.parent and isinstance(self.parent, Season):
             self.is_anime = self.parent.parent.is_anime
