@@ -8,6 +8,8 @@ from RTN.models import SettingsModel
 
 from program.settings.migratable import MigratableBaseModel
 from utils import generate_api_key, get_version
+from typing import Dict, List, Optional
+
 
 deprecation_warning = "This has been deprecated and will be removed in a future version."
 
@@ -355,7 +357,7 @@ class PostProcessing(Observable):
 
 # Sous-modèle pour authMethod
 class AuthMethodModel(Observable):
-    authMethod: str = "Basique"
+    authMethod: str = "basique"
     oauth_client: str = ""
     oauth_secret: str = ""
     oauth_mail: str = ""
@@ -379,8 +381,8 @@ class ApplicationModel(Observable):
 
 class DossierModel(BaseModel):
     on_item_type: List[str] = []
-    authentification: dict[str, str] = {"authappli": "basique"}
-    domaine: dict = {}
+    authentification: Dict[str, str] = Field(default_factory=dict)  # Forcer un dictionnaire vide pour tester
+    domaine: Dict[str, Any] = Field(default_factory=dict)
 
 class MediaModel(Observable):
     on_item_type: List[str] = []

@@ -11,6 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 import time
 import asyncio
 
+
 USER = os.getenv("USER") or os.getlogin()
 
 SCRIPTS_DIR = f"/home/{USER}/projet-riven/riven-frontend/scripts"

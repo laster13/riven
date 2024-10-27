@@ -6,7 +6,7 @@ from requests.exceptions import RequestException
 from typing import Dict
 from program.media.item import MediaItem, Episode, Season, Show
 from program.settings.manager import settings_manager
-from utils.logger import logger
+from utils.logging import logger
 from utils.ratelimiter import RateLimiter, RateLimitExceeded
 from utils.request import get, ping
 
