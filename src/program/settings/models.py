@@ -104,6 +104,8 @@ class Updatable(Observable):
 class PlexLibraryModel(Observable):
     enabled: bool = False
     token: str = ""
+    login: str = ""
+    password: str = ""
     url: str = "http://localhost:32400"
 
 
@@ -221,14 +223,13 @@ class CometConfig(Observable):
     ratelimit: bool = True
 
 class YggConfig(BaseModel):
-    """
-    Classe pour gérer la configuration de Yggflix.
-    """
-    enabled: bool = True
+    enabled: bool = False
     api_url: str = "http://localhost:8081"
     timeout: int = 30                   
     ratelimit: bool = True              
-    ygg_passkey: str = ""  
+    ygg_passkey: str = ""
+    tmdb_api_key: str = ""
+    secret_api_key: str = "" 
 
 
 class ZileanConfig(Observable):
