@@ -65,10 +65,10 @@ class TorboxModel(Observable):
 class DownloadersModel(Observable):
     video_extensions: List[str] = ["mp4", "mkv", "avi"]
     prefer_speed_over_quality: bool = True
-    # movie_filesize_min: int = 200  # MB
-    # movie_filesize_max: int = -1  # MB (-1 is no limit)
-    # episode_filesize_min: int = 40  # MB
-    # episode_filesize_max: int = -1  # MB (-1 is no limit)
+    movie_filesize_mb_min: int = -1  # MB
+    movie_filesize_mb_max: int = -1  # MB (-1 is no limit)
+    episode_filesize_mb_min: int = -1  # MB
+    episode_filesize_mb_max: int = -1  # MB (-1 is no limit)
     real_debrid: RealDebridModel = RealDebridModel()
     all_debrid: AllDebridModel = AllDebridModel()
     torbox: TorboxModel = TorboxModel()
@@ -178,6 +178,9 @@ class TraktModel(Updatable):
     trending_count: int = 10
     fetch_popular: bool = False
     popular_count: int = 10
+    fetch_most_watched: bool = False
+    most_watched_period: str = "weekly"
+    most_watched_count: int = 10
     update_interval: int = 86400
     # oauth: TraktOauthModel = TraktOauthModel()
 

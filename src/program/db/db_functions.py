@@ -1,5 +1,6 @@
 import os
 import shutil
+from threading import Event
 from typing import TYPE_CHECKING
 
 import alembic
@@ -57,7 +58,19 @@ def get_media_items_by_ids(media_item_ids: list[int]):
                 continue
             item = get_item(session, media_item_id, item_type)
             if item:
+                session.expunge(item)
                 yield item
+
+
+def get_media_item_by_imdb_id(imdb_id: str):
+    """Retrieve a MediaItem by its IMDb ID."""
+    from program.media.item import MediaItem
+
+    with db.Session() as session:
+        return session.execute(
+            select(MediaItem)
+            .where(MediaItem.imdb_id == imdb_id)
+        ).unique().scalar_one_or_none()
 
 def get_parent_ids(media_item_ids: list[int]):
     """Retrieve the _ids of MediaItems of type 'movie' or 'show' by a list of MediaItem _ids."""
@@ -170,15 +183,9 @@ def reset_media_item(item: "MediaItem"):
         item.reset()
         session.commit()
 
-def reset_streams(item: "MediaItem", active_stream_hash: str = None):
+def reset_streams(item: "MediaItem"):
     """Reset streams associated with a MediaItem."""
     with db.Session() as session:
-        item.store_state()
-        item = session.merge(item)
-        if active_stream_hash:
-            stream = session.query(Stream).filter(Stream.infohash == active_stream_hash).first()
-            if stream:
-                blacklist_stream(item, stream, session)
 
         session.execute(
             delete(StreamRelation).where(StreamRelation.parent_id == item._id)
@@ -187,20 +194,11 @@ def reset_streams(item: "MediaItem", active_stream_hash: str = None):
         session.execute(
             delete(StreamBlacklistRelation).where(StreamBlacklistRelation.media_item_id == item._id)
         )
-        item.active_stream = {}
         session.commit()
 
 def clear_streams(item: "MediaItem"):
     """Clear all streams for a media item."""
-    with db.Session() as session:
-        item = session.merge(item)
-        session.execute(
-            delete(StreamRelation).where(StreamRelation.parent_id == item._id)
-        )
-        session.execute(
-            delete(StreamBlacklistRelation).where(StreamBlacklistRelation.media_item_id == item._id)
-        )
-        session.commit()
+    reset_streams(item)
 
 def clear_streams_by_id(media_item_id: int):
     """Clear all streams for a media item by the MediaItem _id."""
@@ -239,6 +237,40 @@ def blacklist_stream(item: "MediaItem", stream: Stream, session: Session = None)
             session.execute(
                 insert(StreamBlacklistRelation)
                 .values(media_item_id=item._id, stream_id=stream._id)
+            )
+            item.store_state()
+            session.commit()
+            return True
+        return False
+    finally:
+        if close_session:
+            session.close()
+
+def unblacklist_stream(item: "MediaItem", stream: Stream, session: Session = None) -> bool:
+    close_session = False
+    if session is None:
+        session = db.Session()
+        item = session.execute(select(type(item)).where(type(item)._id == item._id)).unique().scalar_one()
+        close_session = True
+
+    try:
+        item = session.merge(item)
+        association_exists = session.query(
+            session.query(StreamBlacklistRelation)
+            .filter(StreamBlacklistRelation.media_item_id == item._id)
+            .filter(StreamBlacklistRelation.stream_id == stream._id)
+            .exists()
+        ).scalar()
+
+        if association_exists:
+            session.execute(
+                delete(StreamBlacklistRelation)
+                .where(StreamBlacklistRelation.media_item_id == item._id)
+                .where(StreamBlacklistRelation.stream_id == stream._id)
+            )
+            session.execute(
+                insert(StreamRelation)
+                .values(parent_id=item._id, child_id=stream._id)
             )
             item.store_state()
             session.commit()
@@ -357,7 +389,7 @@ def store_item(item: "MediaItem"):
         finally:
             session.close()
 
-def run_thread_with_db_item(fn, service, program, input_id: int = None):
+def run_thread_with_db_item(fn, service, program, input_id, cancellation_event: Event):
     from program.media.item import MediaItem
     if input_id:
         with db.Session() as session:
@@ -377,11 +409,18 @@ def run_thread_with_db_item(fn, service, program, input_id: int = None):
                         logger.log("PROGRAM", f"Service {service.__name__} emitted {item} from input item {input_item} of type {type(item).__name__}, backing off.")
                         program.em.remove_id_from_queues(input_item._id)
 
-                    input_item.store_state()
-                    session.commit()
+                    if not cancellation_event.is_set():
+                        # Update parent item
+                        if input_item.type == "episode":
+                            input_item.parent.parent.store_state()
+                        elif input_item.type == "season":
+                            input_item.parent.store_state()
+                        else:
+                            input_item.store_state()
+                        session.commit()
 
                     session.expunge_all()
-                    yield res
+                    return res
             else:
                 # Indexing returns a copy of the item, was too lazy to create a copy attr func so this will do for now
                 indexed_item = next(fn(input_item), None)
@@ -392,9 +431,10 @@ def run_thread_with_db_item(fn, service, program, input_id: int = None):
                     indexed_item.store_state()
                     session.delete(input_item)
                     indexed_item = session.merge(indexed_item)
-                    session.commit()
-                    logger.debug(f"{input_item._id} is now {indexed_item._id} after indexing...")
-                    yield indexed_item._id
+                    if not cancellation_event.is_set():
+                        session.commit()
+                        logger.debug(f"{input_item._id} is now {indexed_item._id} after indexing...")
+                    return indexed_item._id
         return
     else:
         # Content services
