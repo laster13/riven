@@ -229,7 +229,7 @@ class YggConfig(BaseModel):
     ratelimit: bool = True              
     ygg_passkey: str = ""
     tmdb_api_key: str = ""
-    secret_api_key: str = "" 
+    secret_api_key: str = ""
 
 
 class ZileanConfig(Observable):
