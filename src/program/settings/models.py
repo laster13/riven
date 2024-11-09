@@ -237,7 +237,7 @@ class YggConfig(BaseModel):
 
 class ZileanConfig(Observable):
     enabled: bool = False
-    url: str = "http://localhost:8181"
+    url: str = "http://localhost:8081"
     timeout: int = 30
     ratelimit: bool = Field(default=True, deprecated=deprecation_warning)
 

@@ -20,7 +20,7 @@ class Yggflix:
         self.key = "yggflix"
         self.settings = settings_manager.settings.scraping.yggflix
         self.timeout = self.settings.timeout
-        self.rate_limiter = RateLimiter(max_calls=20, period=60)  # Limiter à 20 appels par 60 secondes
+        self.rate_limiter = RateLimiter(max_calls=1, period=3)
         self.lock = threading.Lock()  # Verrou pour éviter les appels concurrents
         self.initialized = self.validate()
 
@@ -57,11 +57,11 @@ class Yggflix:
         with self.lock:  # Empêche les appels concurrents
             try:
                 # Utiliser un délai pour respecter la limite de taux manuellement
-                time.sleep(20)  # Délai de 3 secondes entre les appels
+                time.sleep(1)  # Délai de 1 secondes entre les appels
                 return self.scrape(item)
             except RateLimitExceeded:
                 logger.error(f"Yggflix rate limit exceeded for {item.log_string}. Waiting before retrying...")
-                time.sleep(20)  # Attendre avant de réessayer (ajustez selon vos besoins)
+                time.sleep(1)  # Attendre avant de réessayer (ajustez selon vos besoins)
                 return self.scrape(item)  # Réessayer après l'attente
             except Exception as e:
                 logger.error(f"Yggflix exception thrown: {e}")
