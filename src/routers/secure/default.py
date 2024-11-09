@@ -2,16 +2,18 @@ from typing import Literal
 
 import requests
 from fastapi import APIRouter, HTTPException, Request
+from kink import di
 from loguru import logger
-from program.content.trakt import TraktContent
+from pydantic import BaseModel, Field, HttpUrl
+from sqlalchemy import func, select
+
+from program.apis import TraktAPI
 from program.db.db import db
+from program.managers.event_manager import EventUpdate
 from program.media.item import Episode, MediaItem, Movie, Season, Show
 from program.media.state import States
 from program.settings.manager import settings_manager
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from utils.event_manager import EventUpdate
-from utils import generate_api_key
+from program.utils import generate_api_key
 
 from ..models.shared import MessageResponse
 
@@ -98,19 +100,22 @@ class TraktOAuthInitiateResponse(BaseModel):
 
 @router.get("/trakt/oauth/initiate", operation_id="trakt_oauth_initiate")
 async def initiate_trakt_oauth(request: Request) -> TraktOAuthInitiateResponse:
-    trakt = request.app.program.services.get(TraktContent)
-    if trakt is None:
+    trakt_api = di[TraktAPI]
+    if trakt_api is None:
         raise HTTPException(status_code=404, detail="Trakt service not found")
-    auth_url = trakt.perform_oauth_flow()
+    auth_url = trakt_api.perform_oauth_flow()
     return {"auth_url": auth_url}
 
 
 @router.get("/trakt/oauth/callback", operation_id="trakt_oauth_callback")
 async def trakt_oauth_callback(code: str, request: Request) -> MessageResponse:
-    trakt = request.app.program.services.get(TraktContent)
-    if trakt is None:
-        raise HTTPException(status_code=404, detail="Trakt service not found")
-    success = trakt.handle_oauth_callback(code)
+    trakt_api = di[TraktAPI]
+    trakt_api_key = settings_manager.settings.content.trakt.api_key
+    if trakt_api is None:
+        raise HTTPException(status_code=404, detail="Trakt Api not found")
+    if trakt_api_key is None:
+        raise HTTPException(status_code=404, detail="Trakt Api key not found in settings")
+    success = trakt_api.handle_oauth_callback(trakt_api_key, code)
     if success:
         return {"message": "OAuth token obtained successfully"}
     else:
@@ -125,7 +130,7 @@ class StatsResponse(BaseModel):
     total_episodes: int
     total_symlinks: int
     incomplete_items: int
-    incomplete_retries: dict[int, int] = Field(
+    incomplete_retries: dict[str, int] = Field(
         description="Media item log string: number of retries"
     )
     states: dict[States, int]
@@ -137,22 +142,22 @@ async def get_stats(_: Request) -> StatsResponse:
     with db.Session() as session:
         # Ensure the connection is open for the entire duration of the session
         with session.connection().execution_options(stream_results=True) as conn:
-            movies_symlinks = conn.execute(select(func.count(Movie._id)).where(Movie.symlinked == True)).scalar_one()
-            episodes_symlinks = conn.execute(select(func.count(Episode._id)).where(Episode.symlinked == True)).scalar_one()
+            movies_symlinks = conn.execute(select(func.count(Movie.id)).where(Movie.symlinked == True)).scalar_one()
+            episodes_symlinks = conn.execute(select(func.count(Episode.id)).where(Episode.symlinked == True)).scalar_one()
             total_symlinks = movies_symlinks + episodes_symlinks
 
-            total_movies = conn.execute(select(func.count(Movie._id))).scalar_one()
-            total_shows = conn.execute(select(func.count(Show._id))).scalar_one()
-            total_seasons = conn.execute(select(func.count(Season._id))).scalar_one()
-            total_episodes = conn.execute(select(func.count(Episode._id))).scalar_one()
-            total_items = conn.execute(select(func.count(MediaItem._id))).scalar_one()
+            total_movies = conn.execute(select(func.count(Movie.id))).scalar_one()
+            total_shows = conn.execute(select(func.count(Show.id))).scalar_one()
+            total_seasons = conn.execute(select(func.count(Season.id))).scalar_one()
+            total_episodes = conn.execute(select(func.count(Episode.id))).scalar_one()
+            total_items = conn.execute(select(func.count(MediaItem.id))).scalar_one()
 
             # Use a server-side cursor for batch processing
             incomplete_retries = {}
             batch_size = 1000
 
             result = conn.execute(
-                select(MediaItem._id, MediaItem.scraped_times)
+                select(MediaItem.id, MediaItem.scraped_times)
                 .where(MediaItem.last_state != States.Completed)
             )
 
@@ -166,7 +171,7 @@ async def get_stats(_: Request) -> StatsResponse:
 
             states = {}
             for state in States:
-                states[state] = conn.execute(select(func.count(MediaItem._id)).where(MediaItem.last_state == state)).scalar_one()
+                states[state] = conn.execute(select(func.count(MediaItem.id)).where(MediaItem.last_state == state)).scalar_one()
 
             payload["total_items"] = total_items
             payload["total_movies"] = total_movies
@@ -207,8 +212,9 @@ async def get_logs() -> str:
 @router.get("/events", operation_id="events")
 async def get_events(
     request: Request,
-) -> dict[str, list[EventUpdate]]:
-    return request.app.program.em.get_event_updates()
+) -> dict[str, list[str]]:
+    events = request.app.program.em.get_event_updates()
+    return events
 
 
 @router.get("/mount", operation_id="mount")
@@ -229,3 +235,42 @@ async def get_rclone_files() -> dict[str, str]:
 
     scan_dir(rclone_dir)  # dict of `filename: filepath``
     return file_map
+
+
+class UploadLogsResponse(BaseModel):
+    success: bool
+    url: HttpUrl = Field(description="URL to the uploaded log file. 50M Filesize limit. 180 day retention.")
+
+@router.post("/upload_logs", operation_id="upload_logs")
+async def upload_logs() -> UploadLogsResponse:
+    """Upload the latest log file to paste.c-net.org"""
+
+    log_file_path = None
+    for handler in logger._core.handlers.values():
+        if ".log" in handler._name:
+            log_file_path = handler._sink._path
+            break
+
+    if not log_file_path:
+        raise HTTPException(status_code=500, detail="Log file handler not found")
+
+    try:
+        with open(log_file_path, "r") as log_file:
+            log_contents = log_file.read()
+
+        response = requests.post(
+            "https://paste.c-net.org/",
+            data=log_contents.encode('utf-8'),
+            headers={"Content-Type": "text/plain"}
+        )
+
+        if response.status_code == 200:
+            logger.info(f"Uploaded log file to {response.text.strip()}")
+            return UploadLogsResponse(success=True, url=response.text.strip())
+        else:
+            logger.error(f"Failed to upload log file: {response.status_code}")
+            raise HTTPException(status_code=500, detail="Failed to upload log file")
+
+    except Exception as e:
+        logger.error(f"Failed to read or upload log file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read or upload log file")

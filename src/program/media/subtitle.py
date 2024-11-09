@@ -13,17 +13,17 @@ if TYPE_CHECKING:
 class Subtitle(db.Model):
     __tablename__ = "Subtitle"
 
-    _id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     language: Mapped[str] = mapped_column(String)
     file: Mapped[str] = mapped_column(String, nullable=True)
 
-    parent_id: Mapped[int] = mapped_column(Integer, ForeignKey("MediaItem._id", ondelete="CASCADE"))
+    parent_id: Mapped[str] = mapped_column(ForeignKey("MediaItem.id", ondelete="CASCADE"))
     parent: Mapped["MediaItem"] = relationship("MediaItem", back_populates="subtitles")
 
     __table_args__ = (
-        Index('ix_subtitle_language', 'language'),
-        Index('ix_subtitle_file', 'file'),
-        Index('ix_subtitle_parent_id', 'parent_id'),
+        Index("ix_subtitle_language", "language"),
+        Index("ix_subtitle_file", "file"),
+        Index("ix_subtitle_parent_id", "parent_id"),
     )
 
     def __init__(self, optional={}):
@@ -36,10 +36,10 @@ class Subtitle(db.Model):
             Path(self.file).unlink()
         self.file = None
         return self
-    
+
     def to_dict(self):
         return {
-            "id": str(self._id),
+            "id": str(self.id),
             "language": self.language,
             "file": self.file,
             "parent_id": self.parent_id

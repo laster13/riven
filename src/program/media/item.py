@@ -1,19 +1,18 @@
 """MediaItem class"""
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Self
 
 import sqlalchemy
+from loguru import logger
 from RTN import parse
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped, mapped_column, object_session, relationship
 
-from utils.sse_manager import sse_manager
 from program.db.db import db
+from program.managers.sse_manager import sse_manager
 from program.media.state import States
 from program.media.subtitle import Subtitle
-from loguru import logger
 
 from ..db.db_functions import blacklist_stream, reset_streams
 from .stream import Stream
@@ -22,7 +21,10 @@ from .stream import Stream
 class MediaItem(db.Model):
     """MediaItem class"""
     __tablename__ = "MediaItem"
-    _id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(sqlalchemy.String, primary_key=True)
+    imdb_id: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
+    tvdb_id: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
+    tmdb_id: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
     number: Mapped[Optional[int]] = mapped_column(sqlalchemy.Integer, nullable=True)
     type: Mapped[str] = mapped_column(sqlalchemy.String, nullable=False)
     requested_at: Mapped[Optional[datetime]] = mapped_column(sqlalchemy.DateTime, default=datetime.now())
@@ -44,9 +46,7 @@ class MediaItem(db.Model):
     aliases: Mapped[Optional[dict]] = mapped_column(sqlalchemy.JSON, default={})
     is_anime: Mapped[Optional[bool]] = mapped_column(sqlalchemy.Boolean, default=False)
     title: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
-    imdb_id: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
-    tvdb_id: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
-    tmdb_id: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
+
     network: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
     country: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
     language: Mapped[Optional[str]] = mapped_column(sqlalchemy.String, nullable=True)
@@ -67,25 +67,25 @@ class MediaItem(db.Model):
     }
 
     __table_args__ = (
-        # UniqueConstraint('imdb_id', name='uix_imdb_id'),
-        Index('ix_mediaitem_type', 'type'),
-        Index('ix_mediaitem_requested_by', 'requested_by'),
-        Index('ix_mediaitem_title', 'title'),
-        Index('ix_mediaitem_imdb_id', 'imdb_id'),
-        Index('ix_mediaitem_tvdb_id', 'tvdb_id'),
-        Index('ix_mediaitem_tmdb_id', 'tmdb_id'),
-        Index('ix_mediaitem_network', 'network'),
-        Index('ix_mediaitem_country', 'country'),
-        Index('ix_mediaitem_language', 'language'),
-        Index('ix_mediaitem_aired_at', 'aired_at'),
-        Index('ix_mediaitem_year', 'year'),
-        Index('ix_mediaitem_overseerr_id', 'overseerr_id'),
-        Index('ix_mediaitem_type_aired_at', 'type', 'aired_at'),  # Composite index
+        Index("ix_mediaitem_type", "type"),
+        Index("ix_mediaitem_requested_by", "requested_by"),
+        Index("ix_mediaitem_title", "title"),
+        Index("ix_mediaitem_imdb_id", "imdb_id"),
+        Index("ix_mediaitem_tvdb_id", "tvdb_id"),
+        Index("ix_mediaitem_tmdb_id", "tmdb_id"),
+        Index("ix_mediaitem_network", "network"),
+        Index("ix_mediaitem_country", "country"),
+        Index("ix_mediaitem_language", "language"),
+        Index("ix_mediaitem_aired_at", "aired_at"),
+        Index("ix_mediaitem_year", "year"),
+        Index("ix_mediaitem_overseerr_id", "overseerr_id"),
+        Index("ix_mediaitem_type_aired_at", "type", "aired_at"),  # Composite index
     )
 
     def __init__(self, item: dict | None) -> None:
         if item is None:
             return
+        self.id = self.__generate_composite_key(item)
         self.requested_at = item.get("requested_at", datetime.now())
         self.requested_by = item.get("requested_by")
         self.requested_id = item.get("requested_id")
@@ -132,17 +132,26 @@ class MediaItem(db.Model):
         #Post processing
         self.subtitles = item.get("subtitles", [])
 
+    @staticmethod
+    def __generate_composite_key(item: dict) -> str | None:
+        """Generate a composite key for the item."""
+        trakt_id = item.get("trakt_id", None)
+        if not trakt_id:
+            return None
+        item_type = item.get("type", "unknown")
+        return f"{item_type}_{trakt_id}"
+
     def store_state(self, given_state=None) -> None:
         new_state = given_state if given_state else self._determine_state()
         if self.last_state and self.last_state != new_state:
-            sse_manager.publish_event("item_update", {"last_state": self.last_state, "new_state": new_state, "item_id": self._id})
+            sse_manager.publish_event("item_update", {"last_state": self.last_state, "new_state": new_state, "item_id": self.id})
         self.last_state = new_state
 
     def is_stream_blacklisted(self, stream: Stream):
         """Check if a stream is blacklisted for this item."""
         session = object_session(self)
         if session:
-            session.refresh(self, attribute_names=['blacklisted_streams'])
+            session.refresh(self, attribute_names=["blacklisted_streams"])
         return stream in self.blacklisted_streams
 
     def blacklist_active_stream(self):
@@ -203,8 +212,8 @@ class MediaItem(db.Model):
         session = object_session(self)
         if session and session.is_active:
             try:
-                session.refresh(self, attribute_names=['blacklisted_streams'])
-                return (len(self.streams) > 0 and any(not stream in self.blacklisted_streams for stream in self.streams))
+                session.refresh(self, attribute_names=["blacklisted_streams"])
+                return (len(self.streams) > 0 and any(stream not in self.blacklisted_streams for stream in self.streams))
             except (sqlalchemy.exc.InvalidRequestError, sqlalchemy.orm.exc.DetachedInstanceError):
                 return False
         return False
@@ -212,7 +221,7 @@ class MediaItem(db.Model):
     def to_dict(self):
         """Convert item to dictionary (API response)"""
         return {
-            "id": str(self._id),
+            "id": str(self.id),
             "title": self.title,
             "type": self.__class__.__name__,
             "imdb_id": self.imdb_id if hasattr(self, "imdb_id") else None,
@@ -279,14 +288,13 @@ class MediaItem(db.Model):
 
     def __eq__(self, other):
         if type(other) == type(self):
-            return self._id == other._id
+            return self.id == other.id
         return False
 
     def copy(self, other):
         if other is None:
             return None
-        self._id = getattr(other, "_id", None)
-        self.imdb_id = getattr(other, "imdb_id", None)
+        self.id = getattr(other, "id", None)
         if hasattr(self, "number"):
             self.number = getattr(other, "number", None)
         return self
@@ -326,7 +334,7 @@ class MediaItem(db.Model):
             return self.aliases
 
     def __hash__(self):
-        return hash(self._id)
+        return hash(self.id)
 
     def reset(self):
         """Reset item attributes."""
@@ -377,17 +385,17 @@ class MediaItem(db.Model):
 
     @property
     def log_string(self):
-        return self.title or self.imdb_id
+        return self.title or self.id
 
     @property
     def collection(self):
-        return self.parent.collection if self.parent else self._id
+        return self.parent.collection if self.parent else self.id
 
 
 class Movie(MediaItem):
     """Movie class"""
     __tablename__ = "Movie"
-    _id: Mapped[int] = mapped_column(sqlalchemy.ForeignKey("MediaItem._id"), primary_key=True)
+    id: Mapped[str] = mapped_column(sqlalchemy.ForeignKey("MediaItem.id"), primary_key=True)
     __mapper_args__ = {
         "polymorphic_identity": "movie",
         "polymorphic_load": "inline",
@@ -411,7 +419,7 @@ class Movie(MediaItem):
 class Show(MediaItem):
     """Show class"""
     __tablename__ = "Show"
-    _id: Mapped[int] = mapped_column(sqlalchemy.ForeignKey("MediaItem._id"), primary_key=True)
+    id: Mapped[str] = mapped_column(sqlalchemy.ForeignKey("MediaItem.id"), primary_key=True)
     seasons: Mapped[List["Season"]] = relationship(back_populates="parent", foreign_keys="Season.parent_id", lazy="joined", cascade="all, delete-orphan", order_by="Season.number")
 
     __mapper_args__ = {
@@ -429,7 +437,7 @@ class Show(MediaItem):
     def get_season_index_by_id(self, item_id):
         """Find the index of an season by its _id."""
         for i, season in enumerate(self.seasons):
-            if season._id == item_id:
+            if season.id == item_id:
                 return i
         return None
 
@@ -520,8 +528,8 @@ class Show(MediaItem):
 class Season(MediaItem):
     """Season class"""
     __tablename__ = "Season"
-    _id: Mapped[int] = mapped_column(sqlalchemy.ForeignKey("MediaItem._id"), primary_key=True)
-    parent_id: Mapped[int] = mapped_column(sqlalchemy.ForeignKey("Show._id"), use_existing_column=True)
+    id: Mapped[str] = mapped_column(sqlalchemy.ForeignKey("MediaItem.id"), primary_key=True)
+    parent_id: Mapped[str] = mapped_column(sqlalchemy.ForeignKey("Show.id"), use_existing_column=True)
     parent: Mapped["Show"] = relationship(lazy=False, back_populates="seasons", foreign_keys="Season.parent_id")
     episodes: Mapped[List["Episode"]] = relationship(back_populates="parent", foreign_keys="Episode.parent_id", lazy="joined", cascade="all, delete-orphan", order_by="Episode.number")
     __mapper_args__ = {
@@ -597,7 +605,7 @@ class Season(MediaItem):
     def get_episode_index_by_id(self, item_id: int):
         """Find the index of an episode by its _id."""
         for i, episode in enumerate(self.episodes):
-            if episode._id == item_id:
+            if episode.id == item_id:
                 return i
         return None
 
@@ -625,8 +633,8 @@ class Season(MediaItem):
 class Episode(MediaItem):
     """Episode class"""
     __tablename__ = "Episode"
-    _id: Mapped[int] = mapped_column(sqlalchemy.ForeignKey("MediaItem._id"), primary_key=True)
-    parent_id: Mapped[int] = mapped_column(sqlalchemy.ForeignKey("Season._id"), use_existing_column=True)
+    id: Mapped[str] = mapped_column(sqlalchemy.ForeignKey("MediaItem.id"), primary_key=True)
+    parent_id: Mapped[str] = mapped_column(sqlalchemy.ForeignKey("Season.id"), use_existing_column=True)
     parent: Mapped["Season"] = relationship(back_populates="episodes", foreign_keys="Episode.parent_id", lazy="joined")
 
     __mapper_args__ = {

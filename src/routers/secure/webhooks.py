@@ -2,12 +2,13 @@ from typing import Any, Dict
 
 import pydantic
 from fastapi import APIRouter, Request
-from program.content.overseerr import Overseerr
-from program.db.db_functions import ensure_item_exists_in_db
-from program.indexers.trakt import get_imdbid_from_tmdb, get_imdbid_from_tvdb
-from program.media.item import MediaItem
-from requests import RequestException
+from kink import di
 from loguru import logger
+from requests import RequestException
+
+from program.apis.trakt_api import TraktAPI
+from program.media.item import MediaItem
+from program.services.content.overseerr import Overseerr
 
 from ..models.overseerr import OverseerrWebhook
 
@@ -41,9 +42,6 @@ async def overseerr(request: Request) -> Dict[str, Any]:
         return {"success": False, "message": "Overseerr not initialized"}
 
     new_item = MediaItem({"imdb_id": imdb_id, "requested_by": "overseerr", "requested_id": req.request.request_id})
-    if ensure_item_exists_in_db(new_item):
-        logger.log("API", "Request already in queue or already exists in the database")
-        return {"success": True}
 
     request.app.program.em.add_item(new_item, service="Overseerr")
 
@@ -53,14 +51,15 @@ async def overseerr(request: Request) -> Dict[str, Any]:
 def get_imdbid_from_overseerr(req: OverseerrWebhook) -> str:
     """Get the imdb_id from the Overseerr webhook"""
     imdb_id = req.media.imdbId
+    trakt_api = di[TraktAPI]
     if not imdb_id:
         try:
             _type = req.media.media_type
             if _type == "tv":
                 _type = "show"
-            imdb_id = get_imdbid_from_tmdb(req.media.tmdbId, type=_type)
+            imdb_id = trakt_api.get_imdbid_from_tmdb(str(req.media.tmdbId), type=_type)
             if not imdb_id or not imdb_id.startswith("tt"):
-                imdb_id = get_imdbid_from_tvdb(req.media.tvdbId, type=_type)
+                imdb_id = trakt_api.get_imdbid_from_tvdb(str(req.media.tvdbId), type=_type)
         except RequestException:
             pass
     return imdb_id

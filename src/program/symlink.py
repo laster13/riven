@@ -1,21 +1,17 @@
-import asyncio
 import os
 import random
-import re
 import shutil
-import time
 from datetime import datetime, timedelta
-from pathlib import Path, PurePath
+from pathlib import Path
 from typing import List, Optional, Union
 
+from loguru import logger
 from sqlalchemy import select
 
 from program.db.db import db
 from program.media.item import Episode, MediaItem, Movie, Season, Show
 from program.media.state import States
-from program.media.stream import Stream
 from program.settings.manager import settings_manager
-from loguru import logger
 
 
 class Symlinker:
@@ -274,7 +270,7 @@ class Symlinker:
     def delete_item_symlinks_by_id(self, item_id: int) -> bool:
         """Delete symlinks and directories based on the item ID."""
         with db.Session() as session:
-            item = session.execute(select(MediaItem).where(MediaItem._id == item_id)).unique().scalar_one()
+            item = session.execute(select(MediaItem).where(MediaItem.id == item_id)).unique().scalar_one()
             if not item:
                 logger.error(f"No item found with ID {item_id}")
                 return False

@@ -1,23 +1,25 @@
+import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Literal, Optional, TypeAlias, Union
 from uuid import uuid4
-from RTN import ParsedData
-from loguru import logger
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from pydantic import BaseModel, RootModel
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-import program.db.db_functions as db_functions 
-from program.downloaders import Downloader
-from program.downloaders.shared import hash_from_uri
-from program.media.item import Episode, MediaItem, Season, Show
-from program.scrapers import Scraping
-from program.types import Event
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from loguru import logger
+from pydantic import BaseModel, RootModel
+from RTN import ParsedData
+from sqlalchemy import select
+
+from program.db import db_functions
 from program.db.db import db
+from program.media.item import Episode, MediaItem
 from program.media.stream import Stream as ItemStream
-from program.scrapers.shared import rtn
-from program.indexers.trakt import TraktIndexer
+from program.services.downloaders import Downloader
+from program.services.downloaders.shared import hash_from_uri
+from program.services.indexers.trakt import TraktIndexer
+from program.services.scrapers import Scraping
+from program.services.scrapers.shared import rtn
+from program.types import Event
+
 
 class Stream(BaseModel):
     infohash: str
@@ -175,10 +177,10 @@ session_manager = ScrapingSessionManager()
 
 router = APIRouter(prefix="/scrape", tags=["scrape"])
 
-def initialize_downloader(request: Request):
+def initialize_downloader(downloader: Downloader):
     """Initialize downloader if not already set"""
     if not session_manager.downloader:
-        session_manager.set_downloader(request.app.program.services.get(Downloader))
+        session_manager.set_downloader(downloader)
 
 @router.get(
     "/scrape/{id}",
@@ -192,7 +194,7 @@ def scrape_item(request: Request, id: str) -> ScrapeItemResponse:
         item_id = None
     else:
         imdb_id = None
-        item_id = int(id)
+        item_id = id
 
     if services := request.app.program.services:
         indexer = services[TraktIndexer]
@@ -211,7 +213,7 @@ def scrape_item(request: Request, id: str) -> ScrapeItemResponse:
             item: MediaItem = (
                 db_session.execute(
                     select(MediaItem)
-                    .where(MediaItem._id == item_id)
+                    .where(MediaItem.id == item_id)
                 )
                 .unique()
                 .scalar_one_or_none()
@@ -237,35 +239,38 @@ async def start_manual_session(
     item_id: str,
     magnet: str
 ) -> StartSessionResponse:
-    downloader: Downloader = request.app.program.services.get(Downloader)
-    session_manager.cleanup_expired(background_tasks)  # Cleanup on new session start
-    initialize_downloader(request)
+    session_manager.cleanup_expired(background_tasks)
+    info_hash = hash_from_uri(magnet).lower()
 
-    hash = hash_from_uri(magnet).lower()
-
+    # Identify item based on IMDb or database ID
     if item_id.startswith("tt"):
         imdb_id = item_id
         item_id = None
     else:
         imdb_id = None
-        item_id = int(item_id)
+        item_id = item_id
+
+    if services := request.app.program.services:
+        indexer = services[TraktIndexer]
+        downloader = services[Downloader]
+    else:
+        raise HTTPException(status_code=412, detail="Required services not initialized")
+
+    initialize_downloader(downloader)
 
     if imdb_id:
         prepared_item = MediaItem({"imdb_id": imdb_id})
-        if db_functions.ensure_item_exists_in_db(prepared_item):
-            item = db_functions.get_media_item_by_imdb_id(imdb_id)
-        else:
-            item = next(TraktIndexer().run(prepared_item))
+        item = next(indexer.run(prepared_item))
     else:
-        item = next(db_functions.get_media_items_by_ids([item_id]), None)
+        item = db_functions.get_item_by_id(item_id)
 
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    session = session_manager.create_session(item_id or imdb_id, hash)
+    session = session_manager.create_session(item_id or imdb_id, info_hash)
 
     try:
-        torrent_id = downloader.add_torrent(hash)
+        torrent_id = downloader.add_torrent(info_hash)
         torrent_info = downloader.get_torrent_info(torrent_id)
         containers = downloader.get_instant_availability([session.magnet]).get(session.magnet, None)
         session_manager.update_session(session.id, torrent_id=torrent_id, torrent_info=torrent_info, containers=containers)
@@ -302,6 +307,7 @@ def manual_select_files(request: Request, session_id, files: Container) -> Selec
 
     try:
         downloader.select_files(session.torrent_id, files.model_dump())
+        session.selected_files = files.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -315,7 +321,7 @@ def manual_select_files(request: Request, session_id, files: Container) -> Selec
     summary="Match container files to item",
     operation_id="manual_update_attributes"
 )
-def manual_update_attributes(request: Request, session_id, data: Union[ContainerFile, ShowFileData]) -> UpdateAttributesResponse:
+async def manual_update_attributes(request: Request, session_id, data: Union[ContainerFile, ShowFileData]) -> UpdateAttributesResponse:
     session = session_manager.get_session(session_id)
     log_string = None
     if not session:
@@ -325,17 +331,13 @@ def manual_update_attributes(request: Request, session_id, data: Union[Container
         raise HTTPException(status_code=500, detail="")
 
     with db.Session() as db_session:
-
-        if str(session.item_id).startswith("tt"):
+        if str(session.item_id).startswith("tt") and not db_functions.get_item_by_external_id(imdb_id=session.item_id) and not db_functions.get_item_by_id(session.item_id):
             prepared_item = MediaItem({"imdb_id": session.item_id})
-            if db_functions.ensure_item_exists_in_db(prepared_item):
-                item = db_functions.get_media_item_by_imdb_id(session.item_id)
-            else:
-                item = next(TraktIndexer().run(prepared_item))
-                db_functions.store_item(item)
-                item = db_functions.get_media_item_by_imdb_id(session.item_id)
+            item = next(TraktIndexer().run(prepared_item))
+            db_session.merge(item)
+            db_session.commit()
         else:
-            item = db_functions.get_item_from_db(session.item_id)
+          item = db_functions.get_item_by_id(session.item_id)
 
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
@@ -343,7 +345,7 @@ def manual_update_attributes(request: Request, session_id, data: Union[Container
         item_ids_to_submit = []
 
         if item.type == "movie":
-            request.app.program.em.cancel_job(item._id)
+            request.app.program.em.cancel_job(item.id)
             item.reset()
             item.file = data.filename
             item.folder = data.filename
@@ -351,13 +353,19 @@ def manual_update_attributes(request: Request, session_id, data: Union[Container
             item.active_stream = {"infohash": session.magnet, "id": session.torrent_info["id"]}
             torrent = rtn.rank(session.magnet, session.magnet)
             item.streams.append(ItemStream(torrent))
-            item_ids_to_submit.append(item._id)
+            item_ids_to_submit.append(item.id)
         else:
+            request.app.program.em.cancel_job(item.id)
+            await asyncio.sleep(0.2)
+            for season in item.seasons:
+                request.app.program.em.cancel_job(season.id)
+                await asyncio.sleep(0.2)
             for season, episodes in data.root.items():
                 for episode, episode_data in episodes.items():
                     item_episode: Episode = next((_episode for _season in item.seasons if _season.number == season for _episode in _season.episodes if _episode.number == episode), None)
                     if item_episode:
-                        request.app.program.em.cancel_job(item._id)
+                        request.app.program.em.cancel_job(item_episode.id)
+                        await asyncio.sleep(0.2)
                         item_episode.reset()
                         item_episode.file = episode_data.filename
                         item_episode.folder = episode_data.filename
@@ -365,9 +373,10 @@ def manual_update_attributes(request: Request, session_id, data: Union[Container
                         item_episode.active_stream = {"infohash": session.magnet, "id": session.torrent_info["id"]}
                         torrent = rtn.rank(session.magnet, session.magnet)
                         item_episode.streams.append(ItemStream(torrent))
-                        item_ids_to_submit.append(item_episode._id)
+                        item_ids_to_submit.append(item_episode.id)
         item.store_state()
         log_string = item.log_string
+        db_session.merge(item)
         db_session.commit()
 
     for item_id in item_ids_to_submit:

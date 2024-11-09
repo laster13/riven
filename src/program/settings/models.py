@@ -1,5 +1,4 @@
 """Riven settings models"""
-import re
 from pathlib import Path
 from typing import Any, Callable, List
 
@@ -7,9 +6,8 @@ from pydantic import BaseModel, Field, field_validator
 from RTN.models import SettingsModel
 
 from program.settings.migratable import MigratableBaseModel
-from utils import generate_api_key, get_version
 from typing import Dict, List, Optional
-
+from program.utils import generate_api_key, get_version
 
 deprecation_warning = "This has been deprecated and will be removed in a future version."
 
@@ -182,7 +180,7 @@ class TraktModel(Updatable):
     most_watched_period: str = "weekly"
     most_watched_count: int = 10
     update_interval: int = 86400
-    # oauth: TraktOauthModel = TraktOauthModel()
+    oauth: TraktOauthModel = TraktOauthModel()
 
 
 class ContentModel(Observable):
@@ -283,16 +281,9 @@ class ProwlarrConfig(Observable):
     limiter_seconds: int = 60
 
 
-class AnnatarConfig(Observable):
-    enabled: bool = False
-    url: str = "http://annatar.elfhosted.com"
-    limit: int = 2000
-    timeout: int = 30
-    ratelimit: bool = True
-
-
 class TorBoxScraperConfig(Observable):
     enabled: bool = False
+    api_key: str = ""
     timeout: int = 30
 
 
@@ -307,7 +298,6 @@ class ScraperModel(Observable):
     jackett: JackettConfig = JackettConfig()
     prowlarr: ProwlarrConfig = ProwlarrConfig()
     orionoid: OrionoidConfig = OrionoidConfig()
-    annatar: AnnatarConfig = AnnatarConfig()
     torbox_scraper: TorBoxScraperConfig = TorBoxScraperConfig()
     mediafusion: MediafusionConfig = MediafusionConfig()
     zilean: ZileanConfig = ZileanConfig()
@@ -396,6 +386,7 @@ class AppModel(Observable):
     version: str = get_version()
     api_key: str = ""
     debug: bool = True
+    debug_database: bool = False
     log: bool = True
     force_refresh: bool = False
     map_metadata: bool = True
