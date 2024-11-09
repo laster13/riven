@@ -13,6 +13,8 @@ from program.utils.request import (
     create_service_session,
     get_rate_limit_params,
 )
+import types
+
 
 
 class Zilean:
@@ -41,7 +43,7 @@ class Zilean:
             logger.error("Zilean timeout is not set or invalid.")
             return False
         try:
-            url = f"{self.settings.url}/api/monitoring/health"
+            url = f"http://localhost:8081/api/monitoring/health"
             response = self.request_handler.execute(HttpMethod.GET, url, timeout=self.timeout)
             return response.is_ok
         except Exception as e:
@@ -59,15 +61,17 @@ class Zilean:
         return {}
 
     def _build_query_params(self, item: MediaItem) -> Dict[str, str]:
-        """Build the query params for the Zilean API"""
-        params = {"Query": item.get_top_title()}
+        """Build the query params for the Zilean API via Stream-Fusion"""
+        params = {"query": item.get_top_title()}
+        if isinstance(item, MediaItem) and hasattr(item, "year"):
+            params["year"] = item.year
         if isinstance(item, Show):
-            params["Season"] = 1
+            params["season"] = 1
         elif isinstance(item, Season):
-            params["Season"] = item.number
+            params["season"] = item.number
         elif isinstance(item, Episode):
-            params["Season"] = item.parent.number
-            params["Episode"] = item.number
+            params["season"] = item.parent.number
+            params["episode"] = item.number
         return params
 
     def scrape(self, item: MediaItem) -> Dict[str, str]:
@@ -80,11 +84,28 @@ class Zilean:
             logger.log("NOT_FOUND", f"No streams found for {item.log_string}")
             return {}
 
+        # Convertir la réponse si nécessaire
+        if isinstance(response.data, types.SimpleNamespace):
+            response_data = vars(response.data)
+        else:
+            response_data = response.data
+
         torrents: Dict[str, str] = {}
-        for result in response.data:
-            if not result.raw_title or not result.info_hash:
-                continue
-            torrents[result.info_hash] = result.raw_title
+
+        # Vérifier que la réponse contient une clé "results" avec une liste de résultats
+        if "results" in response_data and isinstance(response_data["results"], list):
+            for result in response_data["results"]:
+                if isinstance(result, types.SimpleNamespace):  # Convertir SimpleNamespace en dict
+                    result = vars(result)
+
+                if isinstance(result, dict):  # S'assurer que chaque résultat est maintenant un dictionnaire
+                    if not result.get("raw_title") or not result.get("info_hash"):
+                        continue
+                    torrents[result["info_hash"]] = result["raw_title"]
+                else:
+                    logger.error(f"Unexpected result type in 'results': {type(result)}, result: {result}")
+        else:
+            logger.error(f"Expected 'results' key in response, but got: {response_data}")
 
         if torrents:
             logger.log("SCRAPER", f"Found {len(torrents)} streams for {item.log_string}")
