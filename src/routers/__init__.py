@@ -9,13 +9,9 @@ from routers.secure.items import router as items_router
 from routers.secure.scrape import router as scrape_router
 from routers.secure.settings import router as settings_router
 from routers.secure.stream import router as stream_router
-<<<<<<< HEAD
 from routers.secure.script import router as script_router
-
-
-=======
 from routers.secure.webhooks import router as webhooks_router
->>>>>>> upstream/main
+
 
 API_VERSION = "v1"
 

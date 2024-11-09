@@ -1,14 +1,19 @@
 import time
 import threading
 import types
-from requests import ConnectTimeout, ReadTimeout
+from requests import ConnectTimeout, ReadTimeout, get
 from requests.exceptions import RequestException
 from typing import Dict
 from program.media.item import MediaItem, Episode, Season, Show
 from program.settings.manager import settings_manager
-from utils.logging import logger
-from utils.ratelimiter import RateLimiter, RateLimitExceeded
-from utils.request import get, ping
+from program.services.scrapers.shared import ScraperRequestHandler
+from loguru import logger
+from program.utils.request import (
+    HttpMethod,
+    RateLimitExceeded,
+    create_service_session,
+    get_rate_limit_params,
+)
 
 class Yggflix:
     """Scraper pour le service Yggflix"""
@@ -20,8 +25,11 @@ class Yggflix:
         self.key = "yggflix"
         self.settings = settings_manager.settings.scraping.yggflix
         self.timeout = self.settings.timeout
-        self.rate_limiter = RateLimiter(max_calls=1, period=3)
+        rate_limit_params = get_rate_limit_params(max_calls=1, period=3) if self.settings.ratelimit else None
+        session = create_service_session(rate_limit_params=rate_limit_params)
         self.lock = threading.Lock()  # Verrou pour éviter les appels concurrents
+        self.request_handler = ScraperRequestHandler(session)
+        self.rate_limiter = rate_limit_params
         self.initialized = self.validate()
 
         if self.initialized:
@@ -43,7 +51,7 @@ class Yggflix:
         try:
             logger.debug(f"Yggflix is using URL: {self.settings.api_url}")
             url = f"{self.settings.api_url}/api/riven/yggflix?query=test&ygg_passkey={self.settings.ygg_passkey}"
-            response = ping(url=url, timeout=self.timeout, specific_rate_limiter=self.rate_limiter)
+            response = self.request_handler.execute(HttpMethod.GET, url, timeout=self.timeout)
             return response.is_ok
         except Exception as e:
             logger.error(f"Yggflix failed to initialize: {e}")
@@ -96,7 +104,7 @@ class Yggflix:
         params["ygg_passkey"] = self.settings.ygg_passkey
 
         try:
-            response = get(url, params=params, timeout=self.timeout, specific_rate_limiter=self.rate_limiter)
+            response = self.request_handler.execute(HttpMethod.GET, url, params=params, timeout=self.timeout)
             
             if response.status_code == 429:  # API rate limit exceeded
                 retry_after = response.headers.get('Retry-After', 30)  # Attendre 30s si non spécifié
