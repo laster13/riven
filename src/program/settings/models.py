@@ -349,21 +349,18 @@ class SubliminalConfig(Observable):
 class PostProcessing(Observable):
     subliminal: SubliminalConfig = SubliminalConfig()
 
-# Sous-modèle pour authMethod
-class AuthMethodModel(Observable):
-    authMethod: str = "basique"
-    oauth_client: str = ""
-    oauth_secret: str = ""
-    oauth_mail: str = ""
-
 # Modèle utilisateur mis à jour
 class UtilisateurModel(Observable):
     username: str = ""
     email: str = ""
     domain: str = ""
     password: str = ""
-    traefik: AuthMethodModel = AuthMethodModel()
-    domainperso: str = "traefik"
+    oauth_enabled: bool = False
+    oauth_client: str = ""
+    oauth_secret: str = ""
+    oauth_mail: str = ""
+    zurg_enabled: bool = False
+    zurg_token: str = ""
 
 class CloudflareModel(Observable):
     cloudflare_login: str = ""
