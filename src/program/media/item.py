@@ -1,5 +1,6 @@
 """MediaItem class"""
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Self
 
@@ -17,6 +18,22 @@ from program.media.subtitle import Subtitle
 from ..db.db_functions import blacklist_stream, reset_streams
 from .stream import Stream
 
+class ShowMediaType(Enum):
+    """Show media types"""
+    Show = "show"
+    Season = "season"
+    Episode = "episode"
+
+class MovieMediaType(Enum):
+    """Media types"""
+    Movie = "movie"
+
+class MediaType(Enum):
+    """Combined media types"""
+    Show = ShowMediaType.Show.value
+    Season = ShowMediaType.Season.value
+    Episode = ShowMediaType.Episode.value
+    Movie = MovieMediaType.Movie.value
 
 class MediaItem(db.Model):
     """MediaItem class"""
@@ -129,7 +146,7 @@ class MediaItem(db.Model):
         # Overseerr related
         self.overseerr_id = item.get("overseerr_id")
 
-        #Post processing
+        # Post-processing
         self.subtitles = item.get("subtitles", [])
 
     @staticmethod
@@ -141,11 +158,14 @@ class MediaItem(db.Model):
         item_type = item.get("type", "unknown")
         return f"{item_type}_{trakt_id}"
 
-    def store_state(self, given_state=None) -> None:
+    def store_state(self, given_state=None) -> tuple[States, States]:
+        """Store the state of the item."""
+        previous_state = self.last_state
         new_state = given_state if given_state else self._determine_state()
-        if self.last_state and self.last_state != new_state:
-            sse_manager.publish_event("item_update", {"last_state": self.last_state, "new_state": new_state, "item_id": self.id})
+        if previous_state and previous_state != new_state:
+            sse_manager.publish_event("item_update", {"last_state": previous_state, "new_state": new_state, "item_id": self.id})
         self.last_state = new_state
+        return (previous_state, new_state)
 
     def is_stream_blacklisted(self, stream: Stream):
         """Check if a stream is blacklisted for this item."""
@@ -406,7 +426,7 @@ class Movie(MediaItem):
         return self
 
     def __init__(self, item):
-        self.type = "movie"
+        self.type = MovieMediaType.Movie.value
         self.file = item.get("file", None)
         super().__init__(item)
 
@@ -428,11 +448,11 @@ class Show(MediaItem):
     }
 
     def __init__(self, item):
-        super().__init__(item)
-        self.type = "show"
+        self.type = ShowMediaType.Show.value
         self.locations = item.get("locations", [])
         self.seasons: list[Season] = item.get("seasons", [])
         self.propagate_attributes_to_childs()
+        super().__init__(item)
 
     def get_season_index_by_id(self, item_id):
         """Find the index of an season by its _id."""
@@ -543,10 +563,9 @@ class Season(MediaItem):
         super().store_state(given_state)
 
     def __init__(self, item):
-        self.type = "season"
+        self.type = ShowMediaType.Season.value
         self.number = item.get("number", None)
         self.episodes: list[Episode] = item.get("episodes", [])
-        self.parent = item.get("parent", None)
         super().__init__(item)
         if self.parent and isinstance(self.parent, Show):
             self.is_anime = self.parent.is_anime
@@ -643,7 +662,7 @@ class Episode(MediaItem):
     }
 
     def __init__(self, item):
-        self.type = "episode"
+        self.type = ShowMediaType.Episode.value
         self.number = item.get("number", None)
         self.file = item.get("file", None)
         super().__init__(item)
