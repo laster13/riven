@@ -44,15 +44,11 @@ class Observable(MigratableBaseModel):
 class RealDebridModel(Observable):
     enabled: bool = False
     api_key: str = ""
-    proxy_enabled: bool = False
-    proxy_url: str = ""
 
 
 class AllDebridModel(Observable):
     enabled: bool = False
     api_key: str = ""
-    proxy_enabled: bool = False
-    proxy_url: str = ""
 
 
 class TorboxModel(Observable):
@@ -62,11 +58,11 @@ class TorboxModel(Observable):
 
 class DownloadersModel(Observable):
     video_extensions: List[str] = ["mp4", "mkv", "avi"]
-    prefer_speed_over_quality: bool = True
     movie_filesize_mb_min: int = 0  # MB
     movie_filesize_mb_max: int = -1  # MB (-1 is no limit)
     episode_filesize_mb_min: int = 0  # MB
     episode_filesize_mb_max: int = -1  # MB (-1 is no limit)
+    proxy_url: str = ""
     real_debrid: RealDebridModel = RealDebridModel()
     all_debrid: AllDebridModel = AllDebridModel()
     torbox: TorboxModel = TorboxModel()
@@ -293,6 +289,7 @@ class ScraperModel(Observable):
     after_10: int = 24
     parse_debug: bool = False
     enable_aliases: bool = True
+    bucket_limit: int = Field(default=5, ge=0, le=20)
     torrentio: TorrentioConfig = TorrentioConfig()
     knightcrawler: KnightcrawlerConfig = KnightcrawlerConfig()
     jackett: JackettConfig = JackettConfig()
@@ -309,7 +306,7 @@ class ScraperModel(Observable):
 
 
 class RTNSettingsModel(SettingsModel, Observable):
-    profile: str = "default"
+    ...
 
 
 # Application Settings
