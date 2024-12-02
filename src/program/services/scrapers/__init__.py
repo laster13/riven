@@ -18,6 +18,8 @@ from program.services.scrapers.torrentio import Torrentio
 from program.services.scrapers.zilean import Zilean
 from program.services.scrapers.yggflix import Yggflix
 from program.settings.manager import settings_manager
+from program.services.scrapers.sharewood import Sharewood
+from program.services.scrapers.xthor import Xthor
 
 
 class Scraping:
@@ -32,7 +34,9 @@ class Scraping:
             TorBoxScraper: TorBoxScraper(),
             Mediafusion: Mediafusion(),
             Comet: Comet(),
-            Yggflix: Yggflix()
+            Yggflix: Yggflix(),
+            Sharewood: Sharewood(),
+            Xthor: Xthor()
         }
         self.keyword_services = {
             Jackett: Jackett(),

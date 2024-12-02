@@ -228,6 +228,19 @@ class YggConfig(BaseModel):
     tmdb_api_key: str = ""
     secret_api_key: str = ""
 
+class SharewoodConfig(BaseModel):
+    enabled: bool = False
+    api_url: str = "http://localhost:8081"
+    timeout: int = 30                   
+    ratelimit: bool = True              
+    sharewood_passkey: str = ""
+
+class XthorConfig(BaseModel):
+    enabled: bool = False
+    api_url: str = "http://localhost:8081"
+    timeout: int = 30                   
+    ratelimit: bool = True              
+    xthor_passkey: str = ""
 
 class ZileanConfig(Observable):
     enabled: bool = False
@@ -300,6 +313,8 @@ class ScraperModel(Observable):
     zilean: ZileanConfig = ZileanConfig()
     comet: CometConfig = CometConfig()
     yggflix: YggConfig = YggConfig()
+    sharewood: SharewoodConfig = SharewoodConfig()
+    xthor: XthorConfig = XthorConfig()
 
 
 # Version Ranking Model (set application defaults here!)

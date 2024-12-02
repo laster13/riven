@@ -15,45 +15,46 @@ from program.utils.request import (
     get_rate_limit_params,
 )
 
-
-class Yggflix:
-    """Scraper pour le service Yggflix"""
+class Sharewood:
+    """Scraper pour le service Sharewood""" 
 
     def __init__(self):
         """
-        Initialise Yggflix avec la configuration extraite de settings_manager.
+        Initialise Sharewood avec la configuration extraite de settings_manager.
         """
-        self.key = "yggflix"
-        self.settings = settings_manager.settings.scraping.yggflix
+        self.key = "sharewood"
+        self.settings = settings_manager.settings.scraping.sharewood
         self.timeout = self.settings.timeout
-        rate_limit_params = get_rate_limit_params(max_calls=1, period=3) if self.settings.ratelimit else None
+        rate_limit_params = get_rate_limit_params(max_calls=1, period=2) if self.settings.ratelimit else None
         session = create_service_session(rate_limit_params=rate_limit_params)
+        self.lock = threading.Lock()  # Verrou pour éviter les appels concurrents
         self.request_handler = ScraperRequestHandler(session)
+        self.rate_limiter = rate_limit_params
         self.initialized = self.validate()
 
         if self.initialized:
-            logger.success("Yggflix initialized!")
+            logger.success("Sharewood initialized!")
         else:
-            logger.error("Yggflix initialization failed.")
+            logger.error("Sharewood initialization failed.")
 
     def validate(self) -> bool:
-        """Valider les paramètres de Yggflix avant utilisation."""
+        """Valider les paramètres de Sharewood avant utilisation."""
         if not self.settings.enabled:
-            logger.error("Yggflix service is disabled in the configuration.")
+            logger.error("Sharewood service is disabled in the configuration.")
             return False
         if not self.settings.api_url:
-            logger.error("Yggflix API URL is not configured and will not be used.")
+            logger.error("Sharewood API URL is not configured and will not be used.")
             return False
         if not isinstance(self.timeout, int) or self.timeout <= 0:
-            logger.error("Yggflix timeout is not set or invalid.")
+            logger.error("Sharewood timeout is not set or invalid.")
             return False
         try:
-            logger.debug(f"Yggflix is using URL: {self.settings.api_url}")
-            url = f"http://localhost:8081/api/monitoring/health"
+            logger.debug(f"Sharewood is using URL: {self.settings.api_url}")
+            url = f"{self.settings.api_url}/api/riven/sharewood?query=test&sharewood_passkey={self.settings.sharewood_passkey}"
             response = self.request_handler.execute(HttpMethod.GET, url, timeout=self.timeout)
             return response.is_ok
         except Exception as e:
-            logger.error(f"Yggflix failed to initialize: {e}")
+            logger.error(f"Sharewood failed to initialize: {e}")
             return False
 
     def run(self, item: MediaItem) -> Dict[str, str]:
@@ -61,18 +62,22 @@ class Yggflix:
         Scrape les informations pour un élément de média donné (film, série, saison, épisode).
         Gère les erreurs liées au dépassement de la limite d'appel.
         """
-        try:
-            # Utiliser un délai pour respecter la limite de taux manuellement
-            return self.scrape(item)
-        except RateLimitExceeded:
-            logger.error(f"Yggflix rate limit exceeded for {item.log_string}. Waiting before retrying...")
-        except Exception as e:
-            logger.error(f"Yggflix exception thrown: {e}")
-            return {}
+        with self.lock:  # Empêche les appels concurrents
+            try:
+                # Utiliser un délai pour respecter la limite de taux manuellement
+                time.sleep(2)  # Délai de 1 secondes entre les appels
+                return self.scrape(item)
+            except RateLimitExceeded:
+                logger.error(f"Yggflix rate limit exceeded for {item.log_string}. Waiting before retrying...")
+                time.sleep(2)  # Attendre avant de réessayer (ajustez selon vos besoins)
+                return self.scrape(item)  # Réessayer après l'attente
+            except Exception as e:
+                logger.error(f"Sharewood exception thrown: {e}")
+                return {}
 
     def _build_query_params(self, item: MediaItem) -> Dict[str, str]:
         """
-        Construire les paramètres de requête pour l'API Yggflix.
+        Construire les paramètres de requête pour l'API Sharewood.
         """
         params = {"query": item.get_top_title()}  # Utiliser le titre comme "query"
         
@@ -94,9 +99,9 @@ class Yggflix:
         Méthode de scraping pour récupérer les torrents depuis Yggflix.
         Gère les erreurs de dépassement de limite (429 Too Many Requests).
         """
-        url = f"{self.settings.api_url}/api/riven/yggflix"
+        url = f"{self.settings.api_url}/api/riven/sharewood"
         params = self._build_query_params(item)
-        params["ygg_passkey"] = self.settings.ygg_passkey
+        params["sharewood_passkey"] = self.settings.sharewood_passkey
 
         try:
             response = self.request_handler.execute(HttpMethod.GET, url, params=params, timeout=self.timeout)
@@ -139,12 +144,12 @@ class Yggflix:
         except RateLimitExceeded:
             logger.error(f"Rate limit exceeded for {item.log_string}")
         except ConnectTimeout:
-            logger.warning(f"Yggflix connection timeout for {item.log_string}")
+            logger.warning(f"Sharewood connection timeout for {item.log_string}")
         except ReadTimeout:
-            logger.warning(f"Yggflix read timeout for {item.log_string}")
+            logger.warning(f"Sharewood read timeout for {item.log_string}")
         except RequestException as e:
-            logger.error(f"Yggflix request exception: {str(e)}")
+            logger.error(f"Sharewood request exception: {str(e)}")
         except Exception as e:
-            logger.error(f"Yggflix exception thrown: {e}")
+            logger.error(f"Sharewood exception thrown: {e}")
 
         return {}
