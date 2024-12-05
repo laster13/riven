@@ -25,9 +25,8 @@ class Sharewood:
         self.key = "sharewood"
         self.settings = settings_manager.settings.scraping.sharewood
         self.timeout = self.settings.timeout
-        rate_limit_params = get_rate_limit_params(max_calls=1, period=2) if self.settings.ratelimit else None
+        rate_limit_params = get_rate_limit_params(max_calls=1, period=5) if self.settings.ratelimit else None
         session = create_service_session(rate_limit_params=rate_limit_params)
-        self.lock = threading.Lock()  # Verrou pour éviter les appels concurrents
         self.request_handler = ScraperRequestHandler(session)
         self.rate_limiter = rate_limit_params
         self.initialized = self.validate()
@@ -50,7 +49,7 @@ class Sharewood:
             return False
         try:
             logger.debug(f"Sharewood is using URL: {self.settings.api_url}")
-            url = f"{self.settings.api_url}/api/riven/sharewood?query=test&sharewood_passkey={self.settings.sharewood_passkey}"
+            url = f"http://localhost:8081/api/monitoring/health"
             response = self.request_handler.execute(HttpMethod.GET, url, timeout=self.timeout)
             return response.is_ok
         except Exception as e:
@@ -62,18 +61,14 @@ class Sharewood:
         Scrape les informations pour un élément de média donné (film, série, saison, épisode).
         Gère les erreurs liées au dépassement de la limite d'appel.
         """
-        with self.lock:  # Empêche les appels concurrents
-            try:
-                # Utiliser un délai pour respecter la limite de taux manuellement
-                time.sleep(2)  # Délai de 1 secondes entre les appels
-                return self.scrape(item)
-            except RateLimitExceeded:
-                logger.error(f"Yggflix rate limit exceeded for {item.log_string}. Waiting before retrying...")
-                time.sleep(2)  # Attendre avant de réessayer (ajustez selon vos besoins)
-                return self.scrape(item)  # Réessayer après l'attente
-            except Exception as e:
-                logger.error(f"Sharewood exception thrown: {e}")
-                return {}
+        try:
+            # Utiliser un délai pour respecter la limite de taux manuellement
+            return self.scrape(item)
+        except RateLimitExceeded:
+            logger.error(f"Sharewood rate limit exceeded for {item.log_string}. Waiting before retrying...")
+        except Exception as e:
+            logger.error(f"Sharewood exception thrown: {e}")
+            return {}
 
     def _build_query_params(self, item: MediaItem) -> Dict[str, str]:
         """
@@ -101,7 +96,7 @@ class Sharewood:
         """
         url = f"{self.settings.api_url}/api/riven/sharewood"
         params = self._build_query_params(item)
-        params["sharewood_passkey"] = self.settings.sharewood_passkey
+        params["sharewood_passkey"] = self.settings.passkey
 
         try:
             response = self.request_handler.execute(HttpMethod.GET, url, params=params, timeout=self.timeout)

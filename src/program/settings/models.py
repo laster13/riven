@@ -233,14 +233,14 @@ class SharewoodConfig(BaseModel):
     api_url: str = "http://localhost:8081"
     timeout: int = 30                   
     ratelimit: bool = True              
-    sharewood_passkey: str = ""
+    passkey: str = ""
 
 class XthorConfig(BaseModel):
     enabled: bool = False
     api_url: str = "http://localhost:8081"
     timeout: int = 30                   
     ratelimit: bool = True              
-    xthor_passkey: str = ""
+    passkey: str = ""
 
 class ZileanConfig(Observable):
     enabled: bool = False
